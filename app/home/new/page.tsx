@@ -49,6 +49,10 @@ function ReportEditorContent() {
     // Latest report id, readable from async code before React re-renders.
     const reportIdRef = useRef<string | null>(null);
     const creatingRef = useRef<Promise<string | null> | null>(null);
+    // `updated_at` of the version this editor last loaded or saved. Saves only succeed if the
+    // row still has this value, so two people editing at once cannot overwrite each other.
+    const versionRef = useRef<string | null>(null);
+    const [conflictError, setConflictError] = useState<string | null>(null);
 
     const template = templateRecord?.definition ?? null;
     const sections = template?.sections ?? [];
@@ -81,7 +85,7 @@ function ReportEditorContent() {
 
             const { data, error } = await supabase
                 .from('reports')
-                .select('id, owner_id, status, data, admin_feedback, template_id')
+                .select('id, owner_id, status, data, admin_feedback, template_id, updated_at')
                 .eq('id', existingId)
                 .maybeSingle();
             if (cancelled) return;
@@ -116,6 +120,7 @@ function ReportEditorContent() {
 
             setTemplateRecord(record);
             reportIdRef.current = data.id;
+            versionRef.current = data.updated_at ?? null;
             setReportId(data.id);
             setStatus(data.status as ReportStatus);
             setAccess(nextAccess);
@@ -159,7 +164,7 @@ function ReportEditorContent() {
 
         const existingId = reportId ?? reportIdRef.current;
         if (existingId) {
-            const { data: updated, error } = await supabase
+            let query = supabase
                 .from('reports')
                 .update({
                     title,
@@ -169,13 +174,19 @@ function ReportEditorContent() {
                     // Feedback has been addressed once the report is resubmitted.
                     ...(nextStatus === 'completed' ? { admin_feedback: null } : {}),
                 })
-                .eq('id', existingId)
-                .select('id');
+                .eq('id', existingId);
+            // Only overwrite the version this editor has seen (optimistic locking).
+            if (versionRef.current) query = query.eq('updated_at', versionRef.current);
+            const { data: updated, error } = await query.select('id, updated_at');
             if (error) throw error;
-            // RLS blocks silently (0 rows): e.g. a co-editor submitted it, or access was revoked.
+            // 0 rows: someone else saved in between, a co-editor submitted it, or access was revoked (RLS).
             if (!updated || updated.length === 0) {
-                throw new Error('This report can no longer be edited here. It may have been submitted, or your access changed. Reload the page.');
+                const message = 'Someone else changed this report since you opened it (or it was submitted, or your access changed). '
+                    + 'Your latest changes were NOT saved. Copy anything you need, then reload the page.';
+                setConflictError(message);
+                throw new Error(message);
             }
+            versionRef.current = updated[0].updated_at ?? now;
             if (log) await logActivity(nextStatus === 'completed' ? 'REPORT_COMPLETED' : 'REPORT_SAVED',
                 nextStatus === 'completed' ? `submitted "${title}" for review` : `saved draft "${title}"`, existingId);
             return existingId;
@@ -189,10 +200,11 @@ function ReportEditorContent() {
         const { data, error } = await supabase
             .from('reports')
             .insert([{ owner_id: user.id, title, data: currentData, status: nextStatus, template_id: templateRecord?.id ?? null }])
-            .select('id')
+            .select('id, updated_at')
             .single();
         if (error) throw error;
         reportIdRef.current = data.id;
+        versionRef.current = data.updated_at ?? null;
         setReportId(data.id);
         // Keep the id in the URL so a refresh re-opens this report instead of a blank one.
         window.history.replaceState(null, '', `/home/new?id=${data.id}`);
@@ -203,7 +215,7 @@ function ReportEditorContent() {
 
     /** Saves the draft; used by the Save button (logged) and by autosave (silent). */
     const saveDraft = async (currentData: ReportValues, manual: boolean) => {
-        if (!isInitialLoadDone || readOnly || savingRef.current) return;
+        if (!isInitialLoadDone || readOnly || savingRef.current || conflictError) return;
         savingRef.current = true;
         setIsSaving(true);
         setSaveState('saving');
@@ -217,7 +229,7 @@ function ReportEditorContent() {
         } catch (error) {
             console.error("Error saving draft:", error);
             setSaveState('error');
-            if (manual) alert(error instanceof Error && error.message.startsWith('This report') ? error.message : "Failed to save draft. Please check your connection and try again.");
+            if (manual) alert(error instanceof Error && error.message.startsWith('Someone else') ? error.message : "Failed to save draft. Please check your connection and try again.");
         } finally {
             savingRef.current = false;
             setIsSaving(false);
@@ -265,11 +277,11 @@ function ReportEditorContent() {
     // Autosave a few seconds after the last change. New reports are created once they have a title.
     const titleFilled = !!template && reportTitleFrom(template, reportData) !== 'Untitled Report';
     useEffect(() => {
-        if (!hasUnsavedChanges || isSaving || (!reportId && !titleFilled)) return;
+        if (!hasUnsavedChanges || isSaving || conflictError || (!reportId && !titleFilled)) return;
         const timer = setTimeout(() => { void saveDraft(reportData, false); }, saveState === 'error' ? AUTOSAVE_DELAY_MS * 4 : AUTOSAVE_DELAY_MS);
         return () => clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps -- saveDraft is recreated every render; the data/flags below drive autosave
-    }, [currentJson, hasUnsavedChanges, isSaving, reportId, titleFilled, saveState]);
+    }, [currentJson, hasUnsavedChanges, isSaving, reportId, titleFilled, saveState, conflictError]);
 
     // Warn before closing the tab with unsaved changes.
     useEffect(() => {
@@ -281,13 +293,15 @@ function ReportEditorContent() {
 
     const saveStatus = readOnly || !isInitialLoadDone ? '' :
         saveState === 'saving' ? 'Saving…' :
+        conflictError ? 'Not saved: reload the page' :
         saveState === 'error' ? 'Autosave failed. Retrying…' :
         hasUnsavedChanges ? (reportId || titleFilled ? 'Unsaved changes' : 'Add a title to start autosaving') :
         lastSavedAt ? `All changes saved · ${lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` :
         reportId ? 'All changes saved' : '';
 
     const handleMarkCompleted = async (currentData: ReportValues) => {
-        if (!isInitialLoadDone || readOnly || isSaving || !template) return;
+        // Also wait for an in-flight autosave, or both would write the same version.
+        if (!isInitialLoadDone || readOnly || isSaving || savingRef.current || conflictError || !template) return;
         const missing = missingRequired(template, currentData);
         if (missing.length > 0) {
             alert(`Please complete these before submitting:\n\n• ${missing.join('\n• ')}`);
@@ -295,6 +309,7 @@ function ReportEditorContent() {
         }
         if (!confirm("Submit this report for admin review? You will not be able to edit it unless the admin sends it back.")) return;
 
+        savingRef.current = true;
         setIsSaving(true);
         try {
             if (await persist(currentData, 'completed')) {
@@ -306,14 +321,17 @@ function ReportEditorContent() {
             }
         } catch (error) {
             console.error("Error submitting report:", error);
-            alert("Failed to submit report.");
+            alert(error instanceof Error && error.message.startsWith('Someone else') ? error.message : "Failed to submit report.");
         } finally {
+            savingRef.current = false;
             setIsSaving(false);
         }
     };
 
     const banner = loadError ? (
         { tone: 'red', text: loadError }
+    ) : conflictError ? (
+        { tone: 'red', text: conflictError }
     ) : status === 'approved' ? (
         { tone: 'green', text: 'This report was approved and archived. It can no longer be edited.' }
     ) : status === 'completed' ? (

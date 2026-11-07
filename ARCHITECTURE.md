@@ -35,9 +35,9 @@ The two API routes exist because they need secrets the browser must not have:
 |---|---|---|
 | `profiles` | name, designation, department, signature reference, `role` (`faculty`/`admin`) | everyone signed in can read; users edit their own row; `role` and `email` are protected by a trigger |
 | `reports` | `title`, `status` (`draft` → `completed` → `approved`), `data` (JSONB form payload), `admin_feedback` | owner, collaborators and admins read; drafts are editable by the owner and accepted *Editor* collaborators; only admins/server set `approved` or feedback |
-| `collaborators` | invitations (`pending`/`accepted`/`declined`, role `Viewer`/`Editor`) | owner invites and sets roles; the invitee accepts or declines |
+| `collaborators` | invitations (`pending`/`accepted`/`declined`, role `Viewer`/`Editor`) | owner invites and sets roles; the invitee accepts or declines. Only *accepted* collaborators can read the report and its files; pending invitees see title/inviter/role via `my_pending_invitations()` |
 | `notifications` | in-app notifications (Realtime) | private to the recipient; only admins/server notify others; links must be internal paths |
-| `activity_logs` | audit feed | append-only; admins read |
+| `activity_logs` | audit feed | append-only; admins read; author name and time are set by the database |
 | `signup_allowlist` | allowed email domains/addresses | service role only; enforced by a trigger on `auth.users` |
 | `report_templates` | versions of the report format; one `is_active` | everyone signed in reads; admins insert/delete; no updates (activation via `activate_report_template()`) |
 
@@ -99,7 +99,7 @@ public URLs (`lib/storage.ts`). Before something is displayed or rendered, refer
 short-lived signed URLs: in the browser by `lib/storageClient.ts` (cached), on the server by
 `utils/supabase/admin.ts`. Legacy public URLs in old rows are recognised and signed the same way.
 
-Report files live under the report id (the editor creates the draft before the first upload). Signatures live
+Report files live under the report id (the editor creates the draft before the first upload). Files in a report folder can only be deleted by their uploader while the report is a draft. Signatures live
 under the user's id. The storage policies use that first folder to decide who may read or write a file. When the
 server renders the final PDF with the service role, it only signs files from the report's own folder or its
 members' folders (`isPathAllowedForReport`), so an author cannot embed someone else's file. PDFs are converted to one JPEG per page in the browser
@@ -108,6 +108,7 @@ members' folders (`isPathAllowedForReport`), so an author cannot embed someone e
 ## Report lifecycle
 
 1. Faculty create a draft (`/home/new`), optionally invite collaborators (Document Library → Manage Access).
+   Saves are conditional on `updated_at`: if someone else saved in between, the editor stops autosaving and asks to reload instead of overwriting.
 2. **Submit** sets `completed`; the editor and the database lock the report.
 3. The admin reviews it in `/admin` (same `ReportPDF` template as the faculty preview):
    - **Request revision**: status back to `draft`, comment in `admin_feedback`, notification to the owner.

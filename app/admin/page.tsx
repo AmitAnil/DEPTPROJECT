@@ -159,16 +159,23 @@ export default function AdminDashboard() {
         setProcessingReject(true);
         try {
             // 1. Change status back to draft and save the comment
-            const { error: updateError } = await supabase
+            // Only a report that is still waiting for review can be sent back. Without the status
+            // filter, another admin's approval (already archived in Drive) could be undone.
+            const { data: returned, error: updateError } = await supabase
                 .from('reports')
                 .update({
                     status: 'draft',
                     admin_feedback: rejectComment,
                     updated_at: new Date().toISOString()
                 })
-                .eq('id', previewReport.id);
+                .eq('id', previewReport.id)
+                .eq('status', 'completed')
+                .select('id');
 
             if (updateError) throw updateError;
+            if (!returned || returned.length === 0) {
+                throw new Error('This report is no longer waiting for review (another admin may have approved or returned it). The list has been refreshed.');
+            }
 
             // The owner is notified by a database trigger (in-app + email).
             kickEmailDispatch();
@@ -181,6 +188,7 @@ export default function AdminDashboard() {
 
         } catch (error) {
             alert(`Failed to return report: ${error instanceof Error ? error.message : 'unknown error'}`);
+            fetchAdminData();
         } finally {
             setProcessingReject(false);
         }

@@ -237,3 +237,66 @@ values ('55555555-5555-5555-5555-555555555555', '00000000-0000-0000-0000-0000000
 select pg_temp.check(not exists (select 1 from public.claim_notification_emails(100) where id = '55555555-5555-5555-5555-555555555555'), 'a freshly claimed old notification is not claimed twice');
 update public.notifications set email_claimed_at = now() - interval '20 minutes' where id = '55555555-5555-5555-5555-555555555555';
 select pg_temp.check(exists (select 1 from public.claim_notification_emails(100) where id = '55555555-5555-5555-5555-555555555555'), 'an abandoned claim is retried after 15 minutes');
+
+-- ---- 2026-11-08 fixes: locked reports keep their files
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+insert into public.reports (id, owner_id, title, status) values
+ ('66666666-6666-6666-6666-666666666666','00000000-0000-0000-0000-0000000000a1','Lock test draft','draft'),
+ ('77777777-7777-7777-7777-777777777777','00000000-0000-0000-0000-0000000000a1','Lock test submitted','completed');
+insert into public.collaborators (report_id, user_id, role, status) values
+ ('66666666-6666-6666-6666-666666666666','00000000-0000-0000-0000-0000000000b0','Editor','accepted');
+insert into storage.objects (bucket_id, name, owner_id) values
+ ('reports','66666666-6666-6666-6666-666666666666/photos/alice.jpg','00000000-0000-0000-0000-0000000000a1'),
+ ('reports','66666666-6666-6666-6666-666666666666/photos/bob1.jpg','00000000-0000-0000-0000-0000000000b0'),
+ ('reports','66666666-6666-6666-6666-666666666666/photos/bob2.jpg','00000000-0000-0000-0000-0000000000b0'),
+ ('reports','77777777-7777-7777-7777-777777777777/photos/locked.jpg','00000000-0000-0000-0000-0000000000a1'),
+ ('reports','00000000-0000-0000-0000-0000000000a1/tmp/own.jpg','00000000-0000-0000-0000-0000000000a1');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+delete from storage.objects where name like '77777777-%/photos/locked.jpg';
+delete from storage.objects where name like '66666666-%/photos/alice.jpg';
+delete from storage.objects where name like '66666666-%/photos/bob1.jpg';
+delete from storage.objects where name = '00000000-0000-0000-0000-0000000000a1/tmp/own.jpg';
+reset role;
+select pg_temp.check(exists (select 1 from storage.objects where name like '77777777-%/photos/locked.jpg'), 'files of a submitted report cannot be deleted');
+select pg_temp.check(not exists (select 1 from storage.objects where name like '66666666-%/photos/alice.jpg'), 'the owner can delete own files from a draft');
+select pg_temp.check(exists (select 1 from storage.objects where name like '66666666-%/photos/bob1.jpg'), 'nobody can delete files someone else uploaded');
+select pg_temp.check(not exists (select 1 from storage.objects where name like '%/tmp/own.jpg'), 'users can delete files in their personal folder');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+delete from storage.objects where name like '66666666-%/photos/bob1.jpg';
+reset role;
+select pg_temp.check(not exists (select 1 from storage.objects where name like '66666666-%/photos/bob1.jpg'), 'an editor can delete own files from a draft');
+
+select set_config('request.jwt.claim.sub', '', false);
+delete from public.collaborators where report_id = '66666666-6666-6666-6666-666666666666' and user_id = '00000000-0000-0000-0000-0000000000b0';
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+delete from storage.objects where name like '66666666-%/photos/bob2.jpg';
+reset role;
+select pg_temp.check(exists (select 1 from storage.objects where name like '66666666-%/photos/bob2.jpg'), 'a removed collaborator cannot delete files from the report');
+
+-- ---- 2026-11-08 fixes: pending invitees only see the invitation
+select set_config('request.jwt.claim.sub', '', false);
+insert into public.collaborators (report_id, user_id, role, status) values
+ ('66666666-6666-6666-6666-666666666666','00000000-0000-0000-0000-0000000000c0','Viewer','pending');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c0');
+select pg_temp.check(not exists (select 1 from public.reports where id = '66666666-6666-6666-6666-666666666666'), 'a pending invitee cannot read the report');
+select pg_temp.check(not exists (select 1 from storage.objects where name like '66666666-%'), 'a pending invitee cannot read the report''s files');
+select pg_temp.check((select report_title || ' / ' || owner_name || ' / ' || role from public.my_pending_invitations()
+                      where report_id = '66666666-6666-6666-6666-666666666666') = 'Lock test draft / Alice / Viewer', 'a pending invitee sees title, inviter and role');
+update public.collaborators set status = 'accepted' where report_id = '66666666-6666-6666-6666-666666666666' and user_id = '00000000-0000-0000-0000-0000000000c0';
+select pg_temp.check(exists (select 1 from public.reports where id = '66666666-6666-6666-6666-666666666666'), 'after accepting, the invitee can read the report');
+select pg_temp.check(not exists (select 1 from public.my_pending_invitations() where report_id = '66666666-6666-6666-6666-666666666666'), 'accepted invitations leave the pending list');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000d0');
+select pg_temp.check(not exists (select 1 from public.my_pending_invitations() where report_id = '66666666-6666-6666-6666-666666666666'), 'nobody sees other people''s invitations');
+reset role;
+
+-- ---- 2026-11-08 fixes: activity log authorship
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000d0');
+insert into public.activity_logs (user_id, user_name, action_type, description, created_at)
+values ('00000000-0000-0000-0000-0000000000d0', 'Admin', 'REPORT_APPROVED', 'approved "Everything"', '2000-01-01');
+reset role;
+select pg_temp.check((select user_name from public.activity_logs where description = 'approved "Everything"') = 'Mallory', 'activity entries show the real author');
+select pg_temp.check((select created_at from public.activity_logs where description = 'approved "Everything"') > now() - interval '1 minute', 'activity entries cannot be backdated');

@@ -58,7 +58,7 @@ export async function POST(req: Request) {
         }
 
         // 1. Render the PDF (in the report's own template version) with short-lived signed URLs for every image.
-        const { definition: template } = await loadTemplate(admin, report.template_id);
+        const { definition: template } = await loadTemplate(admin, report.template_id, { strict: true });
         // Only files that belong to this report or its members may be signed (see isPathAllowedForReport).
         const { data: collabs, error: collabError } = await admin.from('collaborators').select('user_id').eq('report_id', report.id).eq('status', 'accepted');
         if (collabError) {

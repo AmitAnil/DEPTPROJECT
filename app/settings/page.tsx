@@ -29,6 +29,17 @@ interface CollabRequest {
     reports: { title: string | null; profiles: { full_name: string | null; email: string | null } | null } | null;
 }
 
+/** A row returned by public.my_pending_invitations(). */
+interface PendingInvitationRow {
+    id: string;
+    status: string;
+    role: string;
+    report_id: string;
+    report_title: string | null;
+    owner_name: string | null;
+    owner_email: string | null;
+}
+
 type SettingsTabId = 'Profile' | 'Requests' | 'Settings';
 const TABS: SettingsTabId[] = ['Profile', 'Requests', 'Settings'];
 
@@ -290,25 +301,18 @@ export default function ProfileDashboard() {
                 email_notifications: profData.email_notifications !== false,
             });
 
-            // Load Pending Requests (Join with reports and the owner's profile)
-            const { data: reqData, error: reqError } = await supabase
-                .from('collaborators')
-                .select(`
-                    id,
-                    status,
-                    reports (
-                        title,
-                        profiles (
-                            full_name,
-                            email
-                        )
-                    )
-                `)
-                .eq('user_id', user.id)
-                .eq('status', 'pending');
+            // Pending invitations. Invitees cannot read the report itself until they accept,
+            // so the title and owner come from a database function made for this list.
+            const { data: reqData, error: reqError } = await supabase.rpc('my_pending_invitations');
 
-            if (!reqError && reqData) {
-                setRequests(reqData as unknown as CollabRequest[]);
+            if (reqError) {
+                console.error('Could not load invitations:', reqError.message);
+            } else if (reqData) {
+                setRequests((reqData as PendingInvitationRow[]).map((row) => ({
+                    id: row.id,
+                    status: row.status,
+                    reports: { title: row.report_title, profiles: { full_name: row.owner_name, email: row.owner_email } },
+                })));
             }
         }
     }, [supabase]);

@@ -15,8 +15,11 @@ export async function getAuthContext(): Promise<AuthContext | null> {
     const { data: { user }, error } = await supabase.auth.getUser();
     if (error || !user) return null;
 
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).maybeSingle();
-    return { supabase, user, isAdmin: profile?.role === 'admin' };
+    const { data: profile } = await supabase.from('profiles').select('role, is_active').eq('id', user.id).maybeSingle();
+    // Deactivated accounts can still hold a valid session token until it expires (the Auth ban only
+    // stops new sign-ins). Treat them as signed out, and never as admins (same rule as public.is_admin()).
+    if (profile && profile.is_active === false) return null;
+    return { supabase, user, isAdmin: profile?.role === 'admin' && profile?.is_active !== false };
 }
 
 export const unauthorized = () => NextResponse.json({ error: 'You must be signed in.' }, { status: 401 });
