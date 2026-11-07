@@ -1,0 +1,42 @@
+# DeptDocs - from the repository root run:   docker compose up -d --build
+# Configuration lives in .env next to this file (copy .env.example). See docs/DEPLOYMENT.md.
+name: deptdocs
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        # Compiled into the browser bundle, so they are needed at build time.
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:?set NEXT_PUBLIC_SUPABASE_URL in .env}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:?set NEXT_PUBLIC_SUPABASE_ANON_KEY in .env}
+    image: deptdocs:latest
+    env_file:
+      - ./.env
+    environment:
+      # Same interpolation as the email-retry service, so both always agree.
+      CRON_SECRET: ${CRON_SECRET:-}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1001,gid=1001
+    security_opt:
+      - no-new-privileges:true
+
+  # Optional: retries unsent notification emails every 5 minutes.
+  # Enable with:  docker compose --profile email-retry up -d
+  # Needs CRON_SECRET in .env (and SITE_URL, which email links are built from).
+  email-retry:
+    image: curlimages/curl:8.11.1
+    profiles: ["email-retry"]
+    depends_on: [app]
+    restart: unless-stopped
+    # Only the secret it needs; never the database/SMTP/Google keys.
+    environment:
+      CRON_SECRET: ${CRON_SECRET:-}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'while true; do curl -fsS -X POST -H "Authorization: Bearer $$CRON_SECRET" http://app:3000/api/notifications/dispatch || true; sleep 300; done'

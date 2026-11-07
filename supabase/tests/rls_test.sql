@@ -1,0 +1,239 @@
+-- RLS behaviour tests. Every check raises an exception on failure.
+\set ON_ERROR_STOP on
+set client_min_messages = warning;
+
+-- Users: admin, alice (owner), bob (editor), carol (viewer), mallory (stranger)
+alter table auth.users disable trigger enforce_signup_allowlist;
+insert into auth.users values
+ ('00000000-0000-0000-0000-00000000000a','admin@gmail.com'),
+ ('00000000-0000-0000-0000-0000000000a1','alice@christuniversity.in'),
+ ('00000000-0000-0000-0000-0000000000b0','bob@christuniversity.in'),
+ ('00000000-0000-0000-0000-0000000000c0','carol@christuniversity.in'),
+ ('00000000-0000-0000-0000-0000000000d0','mallory@christuniversity.in');
+insert into public.profiles (id, full_name, email, role) values
+ ('00000000-0000-0000-0000-00000000000a','Admin','admin@gmail.com','admin'),
+ ('00000000-0000-0000-0000-0000000000a1','Alice','alice@christuniversity.in','faculty'),
+ ('00000000-0000-0000-0000-0000000000b0','Bob','bob@christuniversity.in','faculty'),
+ ('00000000-0000-0000-0000-0000000000c0','Carol','carol@christuniversity.in','faculty'),
+ ('00000000-0000-0000-0000-0000000000d0','Mallory','mallory@christuniversity.in','faculty');
+insert into public.reports (id, owner_id, title, status) values
+ ('11111111-1111-1111-1111-111111111111','00000000-0000-0000-0000-0000000000a1','Alice draft','draft'),
+ ('22222222-2222-2222-2222-222222222222','00000000-0000-0000-0000-0000000000a1','Alice submitted','completed');
+insert into public.collaborators (report_id, user_id, role, status) values
+ ('11111111-1111-1111-1111-111111111111','00000000-0000-0000-0000-0000000000b0','Editor','accepted'),
+ ('11111111-1111-1111-1111-111111111111','00000000-0000-0000-0000-0000000000c0','Viewer','accepted');
+insert into storage.objects (bucket_id, name, owner_id) values
+ ('reports','11111111-1111-1111-1111-111111111111/attendanceFiles/list.pdf','00000000-0000-0000-0000-0000000000a1'),
+ ('reports','00000000-0000-0000-0000-0000000000a1/private/unrelated.pdf','00000000-0000-0000-0000-0000000000a1'),
+ ('signatures','00000000-0000-0000-0000-0000000000a1/signature/sig.png','00000000-0000-0000-0000-0000000000a1'),
+ ('signatures','00000000-0000-0000-0000-0000000000a1-0.123.png','00000000-0000-0000-0000-0000000000a1');
+
+alter table auth.users enable trigger enforce_signup_allowlist;
+
+create function pg_temp.as_user(uid text) returns void language plpgsql as $$
+begin
+  perform set_config('request.jwt.claim.sub', uid, false);
+  execute 'set role authenticated';
+end $$;
+create function pg_temp.check(ok boolean, what text) returns void language plpgsql as $$
+begin
+  if not coalesce(ok, false) then raise exception 'FAILED: %', what; end if;
+  raise notice 'ok - %', what;
+end $$;
+set client_min_messages = notice;
+
+-- ---- mallory (stranger)
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000d0');
+select pg_temp.check((select count(*) from public.reports) = 0, 'stranger sees no reports');
+select pg_temp.check((select count(*) from storage.objects) = 0, 'stranger cannot read any stored file');
+update public.reports set title = 'pwned' where id = '11111111-1111-1111-1111-111111111111';
+select pg_temp.check((select count(*) from public.collaborators) = 0, 'stranger sees no collaborators');
+do $$ begin
+  insert into public.notifications (user_id, title, link) values ('00000000-0000-0000-0000-0000000000a1', 'phish', '/home');
+  raise exception 'FAILED: stranger could notify another user';
+exception when insufficient_privilege then raise notice 'ok - stranger cannot notify other users';
+end $$;
+do $$ begin
+  insert into public.reports (owner_id, title) values ('00000000-0000-0000-0000-0000000000a1', 'forged');
+  raise exception 'FAILED: could create report owned by someone else';
+exception when insufficient_privilege then raise notice 'ok - cannot create reports for other people';
+end $$;
+update public.profiles set role = 'admin' where id = '00000000-0000-0000-0000-0000000000d0';
+select pg_temp.check((select role from public.profiles where id = '00000000-0000-0000-0000-0000000000d0') = 'faculty', 'cannot promote self to admin');
+do $$ begin
+  insert into storage.objects (bucket_id, name, owner_id) values ('reports','11111111-1111-1111-1111-111111111111/x/evil.png','00000000-0000-0000-0000-0000000000d0');
+  raise exception 'FAILED: stranger uploaded into someone else''s report folder';
+exception when insufficient_privilege then raise notice 'ok - cannot upload into other report folders';
+end $$;
+do $$ begin
+  insert into storage.objects (bucket_id, name) values ('signatures','00000000-0000-0000-0000-0000000000a1/signature/fake.png');
+  raise exception 'FAILED: uploaded a signature for another user';
+exception when insufficient_privilege then raise notice 'ok - cannot upload signatures for other users';
+end $$;
+reset role;
+select pg_temp.check((select title from public.reports where id = '11111111-1111-1111-1111-111111111111') = 'Alice draft', 'stranger update had no effect');
+
+-- ---- carol (viewer)
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c0');
+select pg_temp.check((select count(*) from public.reports) = 1, 'viewer sees the shared report only');
+select pg_temp.check((select count(*) from storage.objects) = 3, 'viewer can read files and the owner''s signature for the shared report');
+select pg_temp.check(not exists (select 1 from storage.objects where name like '%unrelated.pdf'), 'collaborators cannot read the owner''s other personal files');
+update public.reports set title = 'viewer edit' where id = '11111111-1111-1111-1111-111111111111';
+reset role;
+select pg_temp.check((select title from public.reports where id = '11111111-1111-1111-1111-111111111111') = 'Alice draft', 'viewer cannot edit');
+
+-- ---- bob (editor)
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+update public.reports set title = 'bob edit', owner_id = '00000000-0000-0000-0000-0000000000b0' where id = '11111111-1111-1111-1111-111111111111';
+update public.collaborators set role = 'Editor' where user_id = '00000000-0000-0000-0000-0000000000c0';
+reset role;
+select pg_temp.check((select title from public.reports where id = '11111111-1111-1111-1111-111111111111') = 'bob edit', 'editor can edit a draft');
+select pg_temp.check((select owner_id from public.reports where id = '11111111-1111-1111-1111-111111111111') = '00000000-0000-0000-0000-0000000000a1', 'editor cannot steal ownership');
+select pg_temp.check((select role from public.collaborators where user_id = '00000000-0000-0000-0000-0000000000c0') = 'Viewer', 'editor cannot change other collaborators');
+
+-- ---- alice (owner)
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+update public.reports set title = 'edited after submit' where id = '22222222-2222-2222-2222-222222222222';
+do $$ begin
+  update public.reports set status = 'approved' where id = '11111111-1111-1111-1111-111111111111';
+  raise exception 'FAILED: owner self-approved';
+exception when insufficient_privilege or check_violation then raise notice 'ok - owner cannot approve own report';
+end $$;
+update public.reports set admin_feedback = 'fake feedback' where id = '11111111-1111-1111-1111-111111111111';
+insert into public.collaborators (report_id, user_id) values ('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-0000000000d0');
+update public.collaborators set status = 'accepted' where user_id = '00000000-0000-0000-0000-0000000000d0';
+select pg_temp.check((select count(*) from public.activity_logs) = 0, 'faculty cannot read the audit log');
+reset role;
+select pg_temp.check((select title from public.reports where id = '22222222-2222-2222-2222-222222222222') = 'Alice submitted', 'submitted reports are locked');
+select pg_temp.check((select admin_feedback from public.reports where id = '11111111-1111-1111-1111-111111111111') is null, 'only admins write feedback');
+select pg_temp.check((select status from public.collaborators where user_id = '00000000-0000-0000-0000-0000000000d0') = 'pending', 'owner cannot accept an invite on the invitee''s behalf');
+
+-- ---- mallory accepts the invitation
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000d0');
+update public.collaborators set status = 'accepted', role = 'Editor' where user_id = '00000000-0000-0000-0000-0000000000d0';
+reset role;
+select pg_temp.check((select status || '/' || role from public.collaborators where user_id = '00000000-0000-0000-0000-0000000000d0') = 'accepted/Editor', 'invitee can accept (role stays as granted)');
+
+-- ---- admin
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from public.reports) = 2, 'admin sees all reports');
+update public.reports set status = 'draft', admin_feedback = 'Please fix dates' where id = '22222222-2222-2222-2222-222222222222';
+insert into public.notifications (user_id, title, link) values ('00000000-0000-0000-0000-0000000000a1', 'Revision', '/home/new?id=22222222-2222-2222-2222-222222222222');
+do $$ begin
+  insert into public.notifications (user_id, title, link) values ('00000000-0000-0000-0000-0000000000a1', 'x', 'https://evil.example');
+  raise exception 'FAILED: external notification link accepted';
+exception when check_violation then raise notice 'ok - notification links must be internal';
+end $$;
+reset role;
+select pg_temp.check((select admin_feedback from public.reports where id = '22222222-2222-2222-2222-222222222222') = 'Please fix dates', 'admin can return a report with feedback');
+
+-- ---- sign-up allow-list
+do $$ begin
+  insert into auth.users values (gen_random_uuid(), 'someone@gmail.com');
+  raise exception 'FAILED: non-university sign-up allowed';
+exception when raise_exception then raise notice 'ok - non-university sign-ups are blocked';
+end $$;
+insert into auth.users values (gen_random_uuid(), 'new.student@btech.christuniversity.in');
+select pg_temp.check(true, 'university sub-domain sign-up allowed');
+
+select pg_temp.check((select bool_and(not public) from storage.buckets where id in ('reports','signatures')), 'buckets are private');
+
+-- ---- report templates
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  insert into public.report_templates (name, definition, created_by) values ('Mine', '{"sections":[]}', '00000000-0000-0000-0000-0000000000a1');
+  raise exception 'FAILED: faculty created a template';
+exception when insufficient_privilege then raise notice 'ok - faculty cannot create templates';
+end $$;
+do $$ begin
+  perform public.activate_report_template(null);
+  raise exception 'FAILED: faculty changed the active template';
+exception when insufficient_privilege then raise notice 'ok - faculty cannot activate templates';
+end $$;
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+insert into public.report_templates (id, name, definition, created_by) values
+  ('33333333-3333-3333-3333-333333333333', 'v1', '{"sections":[]}', '00000000-0000-0000-0000-00000000000a'),
+  ('44444444-4444-4444-4444-444444444444', 'v2', '{"sections":[]}', '00000000-0000-0000-0000-00000000000a');
+select public.activate_report_template('33333333-3333-3333-3333-333333333333');
+select public.activate_report_template('44444444-4444-4444-4444-444444444444');
+select pg_temp.check((select string_agg(name, ',') from public.report_templates where is_active) = 'v2', 'exactly one active template');
+update public.report_templates set definition = '{"sections":[1]}' where id = '44444444-4444-4444-4444-444444444444';
+select pg_temp.check((select definition from public.report_templates where id = '44444444-4444-4444-4444-444444444444') = '{"sections":[]}', 'template versions are immutable');
+reset role;
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+select pg_temp.check((select count(*) from public.report_templates) = 2, 'faculty can read templates');
+insert into public.reports (owner_id, title, template_id) values ('00000000-0000-0000-0000-0000000000a1', 'templated', '44444444-4444-4444-4444-444444444444');
+update public.reports set template_id = '33333333-3333-3333-3333-333333333333' where title = 'templated';
+reset role;
+select pg_temp.check((select template_id from public.reports where title = 'templated') = '44444444-4444-4444-4444-444444444444', 'report template cannot be swapped by faculty');
+
+-- ---- automatic notifications + email queue
+reset role;
+delete from public.notifications;
+update public.reports set status = 'draft', admin_feedback = null where id = '11111111-1111-1111-1111-111111111111';
+delete from public.notifications;
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+update public.reports set status = 'completed' where id = '11111111-1111-1111-1111-111111111111';
+reset role;
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-00000000000a' and title = 'Report submitted for review') = 1, 'admins are notified when a report is submitted');
+
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+update public.reports set status = 'draft', admin_feedback = 'Add photos' where id = '11111111-1111-1111-1111-111111111111';
+insert into public.reports (owner_id, title) values ('00000000-0000-0000-0000-0000000000c0', 'Assigned to Carol');
+reset role;
+select pg_temp.check((select message from public.notifications where user_id = '00000000-0000-0000-0000-0000000000a1' and title = 'Report revision required') like '%Add photos%', 'owner is notified of a revision request with the comment');
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000c0' and title = 'New report assigned') = 1, 'faculty are notified of assigned reports');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+insert into public.collaborators (report_id, user_id, role) values ('22222222-2222-2222-2222-222222222222', '00000000-0000-0000-0000-0000000000b0', 'Viewer');
+reset role;
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000b0' and title = 'Collaboration invite') = 1, 'invitees are notified');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+update public.collaborators set status = 'accepted' where report_id = '22222222-2222-2222-2222-222222222222' and user_id = '00000000-0000-0000-0000-0000000000b0';
+reset role;
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000a1' and title = 'Invitation accepted') = 1, 'owner is notified when an invite is accepted');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000a1');
+do $$ begin
+  perform public.claim_notification_emails(10);
+  raise exception 'FAILED: faculty can read the email queue';
+exception when insufficient_privilege then raise notice 'ok - only the server can claim queued emails';
+end $$;
+update public.profiles set is_active = false where id = '00000000-0000-0000-0000-0000000000a1';
+reset role;
+select pg_temp.check((select is_active from public.profiles where id = '00000000-0000-0000-0000-0000000000a1'), 'users cannot deactivate or reactivate themselves');
+
+update public.profiles set email_notifications = false where id = '00000000-0000-0000-0000-0000000000c0';
+select pg_temp.check((select count(*) from public.claim_notification_emails(100)) >= 5, 'pending emails can be claimed');
+select pg_temp.check((select count(*) from public.claim_notification_emails(100)) = 0, 'claimed emails are not claimed twice');
+select pg_temp.check((select count(*) from public.notifications where email_status = 'sending') >= 5, 'claimed emails are marked as sending');
+
+select set_config('request.jwt.claim.sub', '', false); -- act as the service role
+update public.profiles set is_active = false where id = '00000000-0000-0000-0000-00000000000a';
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check((select count(*) from public.reports) = 0, 'a deactivated admin loses admin rights');
+reset role;
+
+-- ---- review fixes: notification queue is server-only
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+insert into public.notifications (user_id, title, link) values ('00000000-0000-0000-0000-0000000000b0', 'spam me', '/home');
+update public.notifications set email_status = 'pending', title = 'changed', is_read = true where user_id = '00000000-0000-0000-0000-0000000000b0';
+reset role;
+select pg_temp.check((select email_status from public.notifications where title = 'spam me' and user_id = '00000000-0000-0000-0000-0000000000b0') = 'skipped', 'users cannot queue emails with self-inserted notifications');
+select pg_temp.check(not exists (select 1 from public.notifications where title = 'changed'), 'users cannot rewrite notification content');
+select pg_temp.check((select bool_and(is_read) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000b0'), 'users can still mark notifications read');
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000b0' and email_status = 'pending') = 0, 'users cannot reset delivery state');
+
+-- ---- review fixes: stale claims are retried by claim time
+select set_config('request.jwt.claim.sub', '', false);
+insert into public.notifications (id, user_id, title, created_at, email_status, email_claimed_at)
+values ('55555555-5555-5555-5555-555555555555', '00000000-0000-0000-0000-0000000000b0', 'old but just claimed', now() - interval '1 hour', 'sending', now());
+select pg_temp.check(not exists (select 1 from public.claim_notification_emails(100) where id = '55555555-5555-5555-5555-555555555555'), 'a freshly claimed old notification is not claimed twice');
+update public.notifications set email_claimed_at = now() - interval '20 minutes' where id = '55555555-5555-5555-5555-555555555555';
+select pg_temp.check(exists (select 1 from public.claim_notification_emails(100) where id = '55555555-5555-5555-5555-555555555555'), 'an abandoned claim is retried after 15 minutes');
