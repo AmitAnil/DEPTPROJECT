@@ -152,6 +152,27 @@ const SUB_CATEGORIES = [
     'Life Skills', 'Soft Skills', 'Others',
 ];
 
+/** The 17 UN Sustainable Development Goals, for mapping an activity to an SDG. */
+const SDG_GOALS = [
+    'SDG 1: No Poverty',
+    'SDG 2: Zero Hunger',
+    'SDG 3: Good Health and Well-being',
+    'SDG 4: Quality Education',
+    'SDG 5: Gender Equality',
+    'SDG 6: Clean Water and Sanitation',
+    'SDG 7: Affordable and Clean Energy',
+    'SDG 8: Decent Work and Economic Growth',
+    'SDG 9: Industry, Innovation and Infrastructure',
+    'SDG 10: Reduced Inequalities',
+    'SDG 11: Sustainable Cities and Communities',
+    'SDG 12: Responsible Consumption and Production',
+    'SDG 13: Climate Action',
+    'SDG 14: Life Below Water',
+    'SDG 15: Life on Land',
+    'SDG 16: Peace, Justice and Strong Institutions',
+    'SDG 17: Partnerships for the Goals',
+];
+
 export const DEFAULT_TEMPLATE: ReportTemplate = {
     schemaVersion: TEMPLATE_SCHEMA_VERSION,
     name: 'Activity Report (built-in)',
@@ -164,6 +185,7 @@ export const DEFAULT_TEMPLATE: ReportTemplate = {
                 { id: 'activityTitle', label: 'Title of the Activity', type: 'text', required: true, placeholder: 'Enter title' },
                 { id: 'activityType', label: 'Type of Activity', pdfLabel: 'Activity Type', type: 'select', options: ACTIVITY_TYPES },
                 { id: 'subCategory', label: 'Sub Category', type: 'select', options: SUB_CATEGORIES },
+                { id: 'sdgGoal', label: 'SDG Goal Mapping', pdfLabel: 'SDG Goal', type: 'select', options: SDG_GOALS },
                 { id: 'venue', label: 'Venue', type: 'text', placeholder: 'e.g. Panel Room, Block IV' },
                 { id: 'collaboration', label: 'Collaboration/ Sponsor', pdfLabel: 'Collaboration/Sponsor', type: 'text', placeholder: 'e.g. Tech Corp / Research Labs' },
                 { id: 'date', endId: 'endDate', label: 'Date/s', type: 'dateRange' },
