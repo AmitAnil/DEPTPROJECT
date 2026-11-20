@@ -8,6 +8,7 @@ import {
     type ListItem, type ReportValues, type TemplateField, type TemplateSubfield,
 } from '@/lib/template';
 import { FieldLabel } from './ScalarField';
+import SelectOrOther from './SelectOrOther';
 
 interface Props {
     field: TemplateField;
@@ -33,10 +34,8 @@ export default function TableField({ field, data, onUpdate }: Props) {
         const label = `${field.label}: ${fixed ? textValue(row, TABLE_ROW_LABEL_KEY) : `row ${rowIndex + 1}`}, ${sf.label}`;
         if (sf.type === 'select') {
             return (
-                <select aria-label={label} className={cell} value={value} onChange={(e) => setCell(rowIndex, sf.id, e.target.value)}>
-                    <option value=""></option>
-                    {(sf.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                </select>
+                <SelectOrOther ariaLabel={label} value={value} options={sf.options ?? []} onChange={(v) => setCell(rowIndex, sf.id, v)}
+                    placeholder="" selectClassName={cell} inputClassName={cell} />
             );
         }
         if (sf.type === 'textarea') {

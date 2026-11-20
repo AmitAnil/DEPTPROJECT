@@ -9,6 +9,7 @@ import { newItemId } from '@/lib/reportData';
 import { listValue, textValue, type ListItem, type ReportValues, type TemplateField, type TemplateSubfield } from '@/lib/template';
 import StoredImage from '@/components/StoredImage';
 import { FieldLabel, inputClass, labelClass } from './ScalarField';
+import SelectOrOther from './SelectOrOther';
 
 interface Props {
     field: TemplateField;
@@ -88,11 +89,8 @@ export default function ListField({ field, data, onUpdate, uploadFolder }: Props
                 return (
                     <div key={sf.id} className="space-y-2">
                         <label htmlFor={inputId} className={labelClass}>{sf.label}{sf.required && <span className="text-red-500"> *</span>}</label>
-                        <select id={inputId} value={value} onChange={(e) => updateItem(item.id, sf.id, e.target.value)} className={`${inputClass} bg-white`}>
-                            <option value="">Select</option>
-                            {(sf.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                            {value && !(sf.options ?? []).includes(value) && <option value={value}>{value}</option>}
-                        </select>
+                        <SelectOrOther id={inputId} value={value} options={sf.options ?? []} onChange={(v) => updateItem(item.id, sf.id, v)}
+                            placeholder="Select" selectClassName={`${inputClass} bg-white`} inputClassName={`${inputClass} bg-white`} />
                     </div>
                 );
             default:

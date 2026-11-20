@@ -668,7 +668,7 @@ export function fieldProblems(field: TemplateField, data: ReportValues): FieldPr
         if (field.type === 'photos') add(`${field.label}: upload at least ${need} photo${need > 1 ? 's' : ''}.`);
         else if (field.type === 'attachments') add(`${field.label}: upload at least one file.`);
         else if (field.type === 'table') add(need > 1 ? `${field.label}: fill in at least ${need} rows.` : `${field.label}: fill in at least one row.`);
-        else if (field.type === 'select') add(`${field.label}: choose an option.`);
+        else if (field.type === 'select') add(`${field.label}: choose an option (or pick "Others" and type your own).`);
         else add(`${field.label}: this field is required.`);
     }
     return problems;

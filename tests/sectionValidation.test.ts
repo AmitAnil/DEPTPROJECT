@@ -37,7 +37,7 @@ describe('section validation (built-in format)', () => {
     it('requires every General Information field, including the SDG goal', () => {
         const data = { ...completeReport(), sdgGoal: '', venue: '  ' };
         const messages = sectionProblems(section('general'), data).map((p) => p.message);
-        expect(messages).toEqual(['SDG Goal Mapping: choose an option.', 'Venue: this field is required.']);
+        expect(messages).toEqual(['SDG Goal Mapping: choose an option (or pick "Others" and type your own).', 'Venue: this field is required.']);
         expect(firstIncompleteSection(DEFAULT_TEMPLATE, data)).toBe(0);
     });
 

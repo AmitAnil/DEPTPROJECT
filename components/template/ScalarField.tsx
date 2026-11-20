@@ -3,6 +3,7 @@
 import React from 'react';
 import { Calendar, Clock, List } from 'lucide-react';
 import { textValue, type ReportValues, type TemplateField } from '@/lib/template';
+import SelectOrOther from './SelectOrOther';
 
 export const inputClass = 'w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-[#4F65F6] text-sm';
 export const labelClass = 'text-sm font-bold text-gray-700';
@@ -53,11 +54,8 @@ export default function ScalarField({ field, data, onUpdate }: Props) {
             return (
                 <div className="space-y-2">
                     <FieldLabel field={field} htmlFor={id} />
-                    <select id={id} value={value} onChange={(e) => set(field.id, e.target.value)} className={inputClass}>
-                        <option value="">Select {field.label}</option>
-                        {(field.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
-                        {value && !(field.options ?? []).includes(value) && <option value={value}>{value}</option>}
-                    </select>
+                    <SelectOrOther id={id} value={value} options={field.options ?? []} onChange={(v) => set(field.id, v)}
+                        placeholder={`Select ${field.label}`} selectClassName={inputClass} inputClassName={inputClass} />
                 </div>
             );
         case 'dateRange':
