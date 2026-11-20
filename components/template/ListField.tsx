@@ -55,7 +55,7 @@ export default function ListField({ field, data, onUpdate, uploadFolder }: Props
             case 'image':
                 return (
                     <div key={sf.id} className="space-y-2">
-                        <span className={labelClass}>{sf.label}</span>
+                        <span className={labelClass}>{sf.label}{sf.required && <span className="text-red-500"> *</span>}</span>
                         {value ? (
                             <div className="relative group w-32 h-32 rounded-lg overflow-hidden border shadow-sm">
                                 <StoredImage src={value} alt={sf.label} className="w-full h-full object-cover" />
@@ -79,7 +79,7 @@ export default function ListField({ field, data, onUpdate, uploadFolder }: Props
             case 'textarea':
                 return (
                     <div key={sf.id} className="space-y-2">
-                        <label htmlFor={inputId} className={labelClass}>{sf.label}</label>
+                        <label htmlFor={inputId} className={labelClass}>{sf.label}{sf.required && <span className="text-red-500"> *</span>}</label>
                         <textarea id={inputId} rows={4} value={value} placeholder={sf.placeholder} onChange={(e) => updateItem(item.id, sf.id, e.target.value)}
                             className={`${inputClass} bg-white rounded-xl leading-relaxed`} />
                     </div>
@@ -87,7 +87,7 @@ export default function ListField({ field, data, onUpdate, uploadFolder }: Props
             case 'select':
                 return (
                     <div key={sf.id} className="space-y-2">
-                        <label htmlFor={inputId} className={labelClass}>{sf.label}</label>
+                        <label htmlFor={inputId} className={labelClass}>{sf.label}{sf.required && <span className="text-red-500"> *</span>}</label>
                         <select id={inputId} value={value} onChange={(e) => updateItem(item.id, sf.id, e.target.value)} className={`${inputClass} bg-white`}>
                             <option value="">Select</option>
                             {(sf.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
@@ -98,9 +98,13 @@ export default function ListField({ field, data, onUpdate, uploadFolder }: Props
             default:
                 return (
                     <div key={sf.id} className="space-y-2">
-                        <label htmlFor={inputId} className={labelClass}>{sf.label}</label>
+                        <label htmlFor={inputId} className={labelClass}>{sf.label}{sf.required && <span className="text-red-500"> *</span>}</label>
                         <input id={inputId} type={sf.type === 'number' ? 'number' : sf.type === 'date' ? 'date' : 'text'} min={sf.type === 'number' ? 0 : undefined}
+                            list={sf.suggestions?.length ? `${inputId}-suggestions` : undefined}
                             value={value} placeholder={sf.placeholder} onChange={(e) => updateItem(item.id, sf.id, e.target.value)} className={`${inputClass} bg-white`} />
+                        {sf.suggestions?.length ? (
+                            <datalist id={`${inputId}-suggestions`}>{sf.suggestions.map((o) => <option key={o} value={o} />)}</datalist>
+                        ) : null}
                     </div>
                 );
         }

@@ -25,7 +25,7 @@ describe('built-in template', () => {
 
     it('requires at least two activity photos', () => {
         const missing = missingRequired(DEFAULT_TEMPLATE, normalizeReportData({ activityTitle: 'X', activityPhotos: [{ id: '1', url: 'sb://reports/a.jpg' }] }));
-        expect(missing).toEqual(['Activity Photos: Upload Photos (at least 2)']);
+        expect(missing).toContain('Activity Photos: Upload Photos: upload at least 2 photos.');
     });
 });
 

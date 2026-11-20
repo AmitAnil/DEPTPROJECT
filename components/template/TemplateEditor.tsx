@@ -293,6 +293,14 @@ function FieldEditor({ field, open, idEditable, onToggle, onChange, onRename, on
                             <input className={input} value={field.placeholder ?? ''} onChange={(e) => onChange({ placeholder: e.target.value || undefined })} />
                         </label>
                     )}
+                    {field.type === 'text' && (
+                        <label className="space-y-1 md:col-span-2">
+                            <span className={small}>Suggestions (optional, one per line). People can pick one or type their own.</span>
+                            <textarea rows={3} className={input} value={(field.suggestions ?? []).join('\n')}
+                                onChange={(e) => onChange({ suggestions: e.target.value ? e.target.value.split('\n') : undefined })}
+                                onBlur={(e) => { const l = linesToList(e.target.value); onChange({ suggestions: l.length ? l : undefined }); }} />
+                        </label>
+                    )}
                     {field.type === 'select' && (
                         <label className="space-y-1 md:col-span-2">
                             <span className={small}>Options (one per line)</span>
@@ -389,6 +397,14 @@ function SubfieldsEditor({ subfields, onChange, allowImages = true, title = 'Col
                         <textarea rows={2} className={`${input} col-span-12`} placeholder="Options, one per line" value={(sf.options ?? []).join('\n')}
                             onChange={(e) => update(i, { options: e.target.value.split('\n') })} onBlur={(e) => update(i, { options: linesToList(e.target.value) })} />
                     )}
+                    {sf.type === 'text' && (
+                        <textarea rows={2} className={`${input} col-span-12`} placeholder="Suggestions (optional), one per line" value={(sf.suggestions ?? []).join('\n')}
+                            onChange={(e) => update(i, { suggestions: e.target.value ? e.target.value.split('\n') : undefined })}
+                            onBlur={(e) => { const l = linesToList(e.target.value); update(i, { suggestions: l.length ? l : undefined }); }} />
+                    )}
+                    <label className="col-span-12 flex items-center gap-2 text-xs text-gray-600">
+                        <input type="checkbox" checked={!!sf.required} onChange={(e) => update(i, { required: e.target.checked || undefined })} /> Every entry must fill this column
+                    </label>
                 </div>
             ))}
             <button type="button" onClick={() => onChange([...subfields, { id: slugifyId('column', new Set(subfields.map((s) => s.id))), label: 'New column', type: 'text' }])}

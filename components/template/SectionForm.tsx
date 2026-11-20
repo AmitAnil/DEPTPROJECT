@@ -1,9 +1,9 @@
 "use client";
 
 import type { UploadFolder } from '@/lib/files';
-import React from 'react';
-import { ChevronRight } from 'lucide-react';
-import type { ReportValues, TemplateSection } from '@/lib/template';
+import React, { useEffect, useRef } from 'react';
+import { AlertCircle, ChevronRight } from 'lucide-react';
+import type { FieldProblem, ReportValues, TemplateField, TemplateSection } from '@/lib/template';
 import ScalarField from './ScalarField';
 import ListField from './ListField';
 import TableField from './TableField';
@@ -21,34 +21,49 @@ interface Props {
     /** Shown on the last section. */
     onFinish?: () => void;
     canFinish?: boolean;
+    /** Missing fields to highlight (empty until the user tries to move on). */
+    problems?: FieldProblem[];
+    /** Changes on every blocked attempt, so the error list scrolls into view again. */
+    errorTick?: number;
 }
 
 /** Renders one template section as a form. */
-export default function SectionForm({ section, data, onUpdate, uploadFolder, onNext, onFinish, canFinish = true }: Props) {
+export default function SectionForm({ section, data, onUpdate, uploadFolder, onNext, onFinish, canFinish = true, problems = [], errorTick = 0 }: Props) {
+    const summaryRef = useRef<HTMLDivElement>(null);
+    const hasProblems = problems.length > 0;
+    useEffect(() => {
+        if (hasProblems) summaryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Only when the user tries again, not on every keystroke.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [errorTick]);
+
+    const problemsFor = (fieldId: string) => problems.filter((p) => p.fieldId === fieldId);
+
     return (
         <div className="space-y-8 animate-in fade-in duration-500 max-w-3xl">
             <h3 className="text-xl font-bold text-[#1a365d] border-b-2 border-[#1a365d] inline-block pb-1">{section.title}</h3>
 
+            {hasProblems && (
+                <div ref={summaryRef} role="alert" className="p-4 rounded-xl border border-red-200 bg-red-50 text-sm text-red-700 scroll-mt-4">
+                    <p className="font-bold flex items-center gap-2"><AlertCircle size={16} /> Please fill in every field before moving on:</p>
+                    <ul className="mt-2 ml-6 list-disc space-y-0.5">
+                        {problems.map((p, i) => <li key={i}>{p.message}</li>)}
+                    </ul>
+                </div>
+            )}
+
             <div className="space-y-6">
                 {section.fields.map((field, i) => {
                     const key = `${field.id}-${i}`;
-                    switch (field.type) {
-                        case 'list':
-                            return <ListField key={key} field={field} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />;
-                        case 'table':
-                            return <TableField key={key} field={field} data={data} onUpdate={onUpdate} />;
-                        case 'photos':
-                            return <PhotosField key={key} field={field} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />;
-                        case 'attachments':
-                            return (
-                                <AttachmentsField key={key} fieldId={field.id} uploadLabel={field.label} required={field.required} help={field.help}
-                                    allowSpreadsheets={field.allowSpreadsheets} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />
-                            );
-                        case 'preparedBy':
-                            return <PreparedByField key={key} fieldId={field.id} data={data} onUpdate={onUpdate} />;
-                        default:
-                            return <ScalarField key={key} field={field} data={data} onUpdate={onUpdate} />;
-                    }
+                    const fieldErrors = problemsFor(field.id);
+                    return (
+                        <div key={key} className={fieldErrors.length > 0 ? 'rounded-xl ring-2 ring-red-300 ring-offset-4' : undefined}>
+                            <FieldInput field={field} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />
+                            {fieldErrors.map((p, j) => (
+                                <p key={j} className="mt-2 text-xs font-semibold text-red-600 flex items-center gap-1"><AlertCircle size={12} /> {p.message}</p>
+                            ))}
+                        </div>
+                    );
                 })}
             </div>
 
@@ -69,4 +84,25 @@ export default function SectionForm({ section, data, onUpdate, uploadFolder, onN
             </div>
         </div>
     );
+}
+
+/** The input for one field, by type. */
+function FieldInput({ field, data, onUpdate, uploadFolder }: { field: TemplateField } & Pick<Props, 'data' | 'onUpdate' | 'uploadFolder'>) {
+    switch (field.type) {
+        case 'list':
+            return <ListField field={field} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />;
+        case 'table':
+            return <TableField field={field} data={data} onUpdate={onUpdate} />;
+        case 'photos':
+            return <PhotosField field={field} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />;
+        case 'attachments':
+            return (
+                <AttachmentsField fieldId={field.id} uploadLabel={field.label} required={field.required} help={field.help}
+                    allowSpreadsheets={field.allowSpreadsheets} data={data} onUpdate={onUpdate} uploadFolder={uploadFolder} />
+            );
+        case 'preparedBy':
+            return <PreparedByField fieldId={field.id} data={data} onUpdate={onUpdate} />;
+        default:
+            return <ScalarField field={field} data={data} onUpdate={onUpdate} />;
+    }
 }

@@ -62,9 +62,13 @@ export interface TemplateSubfield {
     label: string;
     type: SubfieldType;
     options?: string[];
+    /** Text columns: values offered in a pick-or-type list. */
+    suggestions?: string[];
     placeholder?: string;
     /** Column label printed in the PDF if different from the form label. */
     pdfLabel?: string;
+    /** Every entry of the group must fill this column. */
+    required?: boolean;
 }
 
 /** One property bag for all field types keeps the admin editor simple; unused keys are ignored. */
@@ -82,6 +86,8 @@ export interface TemplateField {
     bullets?: boolean;
     // select / subfields
     options?: string[];
+    /** Text fields: values offered in a pick-or-type list (users can still type anything). */
+    suggestions?: string[];
     // dateRange / timeRange: second value is stored under endId
     endId?: string;
     // list
@@ -173,6 +179,27 @@ const SDG_GOALS = [
     'SDG 17: Partnerships for the Goals',
 ];
 
+const ACTIVITY_LEVELS = ['Department', 'School', 'Institutional (University)', 'State', 'National', 'International'];
+const ACTIVITY_MODES = ['Offline', 'Online', 'Hybrid'];
+
+const VENUE_SUGGESTIONS = [
+    'Seminar Hall', 'Auditorium', 'Panel Room', 'Conference Room', 'Classroom', 'Computer Lab',
+    'Online (Google Meet)', 'Online (Microsoft Teams)', 'Online (Zoom)',
+];
+
+/** Common designations of faculty who prepare reports. */
+export const FACULTY_DESIGNATIONS = [
+    'Professor', 'Associate Professor', 'Assistant Professor', 'Head of Department', 'Dean', 'Associate Dean',
+    'Faculty Coordinator', 'Lab Instructor',
+];
+
+/** Common titles of speakers and guests. */
+const SPEAKER_DESIGNATIONS = [
+    ...FACULTY_DESIGNATIONS.filter((d) => d !== 'Lab Instructor' && d !== 'Faculty Coordinator'),
+    'Director', 'Founder', 'Co-Founder', 'CEO', 'CTO', 'Manager', 'Senior Software Engineer', 'Software Engineer',
+    'Data Scientist', 'Research Scientist', 'Consultant', 'Industry Expert', 'Alumnus / Alumna', 'Research Scholar', 'Student',
+];
+
 export const DEFAULT_TEMPLATE: ReportTemplate = {
     schemaVersion: TEMPLATE_SCHEMA_VERSION,
     name: 'Activity Report (built-in)',
@@ -183,58 +210,68 @@ export const DEFAULT_TEMPLATE: ReportTemplate = {
             id: 'general', title: 'General Information', icon: 'file-text',
             fields: [
                 { id: 'activityTitle', label: 'Title of the Activity', type: 'text', required: true, placeholder: 'Enter title' },
-                { id: 'activityType', label: 'Type of Activity', pdfLabel: 'Activity Type', type: 'select', options: ACTIVITY_TYPES },
-                { id: 'subCategory', label: 'Sub Category', type: 'select', options: SUB_CATEGORIES },
-                { id: 'sdgGoal', label: 'SDG Goal Mapping', pdfLabel: 'SDG Goal', type: 'select', options: SDG_GOALS },
-                { id: 'venue', label: 'Venue', type: 'text', placeholder: 'e.g. Panel Room, Block IV' },
-                { id: 'collaboration', label: 'Collaboration/ Sponsor', pdfLabel: 'Collaboration/Sponsor', type: 'text', placeholder: 'e.g. Tech Corp / Research Labs' },
-                { id: 'date', endId: 'endDate', label: 'Date/s', type: 'dateRange' },
-                { id: 'time', endId: 'endTime', label: 'Time', type: 'timeRange' },
+                { id: 'activityType', label: 'Type of Activity', pdfLabel: 'Activity Type', type: 'select', required: true, options: ACTIVITY_TYPES },
+                { id: 'subCategory', label: 'Sub Category', type: 'select', required: true, options: SUB_CATEGORIES },
+                { id: 'sdgGoal', label: 'SDG Goal Mapping', pdfLabel: 'SDG Goal', type: 'select', required: true, options: SDG_GOALS },
+                { id: 'activityLevel', label: 'Level of Activity', pdfLabel: 'Level', type: 'select', required: true, options: ACTIVITY_LEVELS },
+                { id: 'activityMode', label: 'Mode of Activity', pdfLabel: 'Mode', type: 'select', required: true, options: ACTIVITY_MODES },
+                { id: 'venue', label: 'Venue', type: 'text', required: true, placeholder: 'Pick from the list or type, e.g. Panel Room, Block IV', suggestions: VENUE_SUGGESTIONS },
+                {
+                    id: 'collaboration', label: 'Collaboration/ Sponsor', pdfLabel: 'Collaboration/Sponsor', type: 'text', required: true,
+                    placeholder: 'e.g. Tech Corp / Research Labs', help: 'Choose "None" if there was no collaborator or sponsor.',
+                    suggestions: ['None', `Internal (${DEPARTMENT_NAME})`],
+                },
+                { id: 'date', endId: 'endDate', label: 'Date/s', type: 'dateRange', required: true, help: 'For a one-day activity, use the same start and end date.' },
+                { id: 'time', endId: 'endTime', label: 'Time', type: 'timeRange', required: true },
             ],
         },
         {
             id: 'speakers', title: 'Speaker/Guest Details', icon: 'user', pdfTitle: 'Speaker/Guest/Presenter Details',
             fields: [{
-                id: 'speakers', label: 'Speakers', type: 'list', itemLabel: 'Speaker', pdfLayout: 'cards',
+                id: 'speakers', label: 'Speakers', type: 'list', itemLabel: 'Speaker', pdfLayout: 'cards', required: true,
                 subfields: [
-                    { id: 'name', label: 'Name of the Speaker/Guest/Presenter', pdfLabel: 'Name', type: 'text' },
-                    { id: 'designation', label: 'Title/Position', type: 'text' },
-                    { id: 'organization', label: 'Organization', type: 'text' },
-                    { id: 'contact', label: 'Contact Info', type: 'text' },
-                    { id: 'presentationTitle', label: 'Title of Presentation', type: 'text' },
+                    { id: 'name', label: 'Name of the Speaker/Guest/Presenter', pdfLabel: 'Name', type: 'text', required: true },
+                    { id: 'designation', label: 'Title/Position', type: 'text', required: true, placeholder: 'Pick from the list or type', suggestions: SPEAKER_DESIGNATIONS },
+                    { id: 'organization', label: 'Organization', type: 'text', required: true },
+                    { id: 'contact', label: 'Contact Info', type: 'text', required: true, placeholder: 'Email or phone number' },
+                    { id: 'presentationTitle', label: 'Title of Presentation', type: 'text', required: true },
                 ],
             }],
         },
         {
             id: 'participants', title: 'Participants Profile', icon: 'users', pdfTitle: 'Participants profile',
             fields: [{
-                id: 'participantProfiles', label: 'Participants', type: 'list', itemLabel: 'Group', pdfLayout: 'table',
+                id: 'participantProfiles', label: 'Participants', type: 'list', itemLabel: 'Group', pdfLayout: 'table', required: true,
+                help: 'Enter 0 for a group that did not attend, or remove that group.',
                 subfields: [
-                    { id: 'type', label: 'Type of Participants', type: 'select', options: ['Faculty', 'Student', 'Research Scholar', 'Others'] },
-                    { id: 'count', label: 'No. of Participants', type: 'number', placeholder: 'Enter count' },
+                    {
+                        id: 'type', label: 'Type of Participants', type: 'select', required: true,
+                        options: ['Faculty', 'Student', 'Research Scholar', 'Alumni', 'Industry Professionals', 'Others'],
+                    },
+                    { id: 'count', label: 'No. of Participants', type: 'number', required: true, placeholder: 'Enter count' },
                 ],
             }],
         },
         {
             id: 'synopsis', title: 'Synopsis', icon: 'align-left', pdfTitle: 'Synopsis of the Activity',
             fields: [
-                { id: 'highlights', label: 'Highlights of the activity', pdfLabel: 'Highlights', type: 'textarea', bullets: true },
-                { id: 'takeaways', label: 'Key Takeaways', type: 'textarea', bullets: true },
-                { id: 'summary', label: 'Summary of the Activity', pdfLabel: 'Summary', type: 'textarea', bullets: true },
-                { id: 'followUpPlan', label: 'Follow Up Plan', pdfLabel: 'Follow-up plan', type: 'textarea', bullets: true },
+                { id: 'highlights', label: 'Highlights of the activity', pdfLabel: 'Highlights', type: 'textarea', bullets: true, required: true },
+                { id: 'takeaways', label: 'Key Takeaways', type: 'textarea', bullets: true, required: true },
+                { id: 'summary', label: 'Summary of the Activity', pdfLabel: 'Summary', type: 'textarea', bullets: true, required: true },
+                { id: 'followUpPlan', label: 'Follow Up Plan', pdfLabel: 'Follow-up plan', type: 'textarea', bullets: true, required: true },
             ],
         },
         {
             id: 'preparedBy', title: 'Report Prepared By', icon: 'clipboard', pdfTitle: 'Report prepared by',
-            fields: [{ id: 'organizersList', label: 'Prepared by', type: 'preparedBy' }],
+            fields: [{ id: 'organizersList', label: 'Prepared by', type: 'preparedBy', required: true }],
         },
         {
             id: 'speakerProfile', title: 'Speaker Profile', icon: 'user', newPage: true,
             fields: [{
                 id: 'speakers', label: 'Speakers', type: 'list', itemLabel: 'Speaker', fixedItems: true, pdfLayout: 'profile',
                 subfields: [
-                    { id: 'about', label: 'About the Speaker', type: 'textarea', placeholder: 'Brief biography...' },
-                    { id: 'photo', label: 'Speaker Photo', type: 'image' },
+                    { id: 'about', label: 'About the Speaker', type: 'textarea', placeholder: 'Brief biography...', required: true },
+                    { id: 'photo', label: 'Speaker Photo', type: 'image', required: true },
                 ],
             }],
         },
@@ -245,19 +282,19 @@ export const DEFAULT_TEMPLATE: ReportTemplate = {
         },
         {
             id: 'attendance', title: 'Attendance List', icon: 'list', newPage: true,
-            fields: [{ id: 'attendanceFiles', label: 'Upload scanned attendance sheets, images, or exported Excel data', type: 'attachments', allowSpreadsheets: true }],
+            fields: [{ id: 'attendanceFiles', label: 'Upload scanned attendance sheets, images, or exported Excel data', type: 'attachments', required: true, allowSpreadsheets: true }],
         },
         {
             id: 'brochure', title: 'Brochure', icon: 'book', pdfTitle: 'Event Brochure', newPage: true,
-            fields: [{ id: 'brochureFiles', label: 'Upload Event Brochure', type: 'attachments' }],
+            fields: [{ id: 'brochureFiles', label: 'Upload Event Brochure', type: 'attachments', required: true }],
         },
         {
             id: 'nfa', title: 'Notice for Approval', icon: 'shield', newPage: true,
-            fields: [{ id: 'approvalFiles', label: 'Upload Approval Document', type: 'attachments' }],
+            fields: [{ id: 'approvalFiles', label: 'Upload Approval Document', type: 'attachments', required: true }],
         },
         {
             id: 'feedback', title: 'Feedback Analysis', icon: 'chart', newPage: true,
-            fields: [{ id: 'feedbackFiles', label: 'Upload Feedback Charts / Documents', type: 'attachments' }],
+            fields: [{ id: 'feedbackFiles', label: 'Upload Feedback Charts / Documents', type: 'attachments', required: true }],
         },
     ],
 };
@@ -409,6 +446,7 @@ export function validateTemplate(input: unknown): TemplateValidation {
             };
 
             if (type === 'textarea') field.bullets = asBool(f.bullets);
+            if (type === 'text') field.suggestions = asOptions(f.suggestions)?.length ? asOptions(f.suggestions) : undefined;
             if (type === 'select') {
                 field.options = asOptions(f.options) ?? [];
                 if (field.options.length === 0) errors.push(`${fWhere}: a dropdown needs at least one option.`);
@@ -446,7 +484,11 @@ export function validateTemplate(input: unknown): TemplateValidation {
                     if (!ID_PATTERN.test(sid) || sid === 'id') errors.push(`${sWhere}: invalid id "${sid}".`);
                     else if (subIds.has(sid)) errors.push(`${sWhere}: duplicate id "${sid}".`);
                     subIds.add(sid);
-                    const sub: TemplateSubfield = { id: sid, label: sLabel, type: sType, placeholder: asStr(sf.placeholder, 200) || undefined, pdfLabel: asStr(sf.pdfLabel, 200) || undefined };
+                    const sub: TemplateSubfield = {
+                        id: sid, label: sLabel, type: sType, placeholder: asStr(sf.placeholder, 200) || undefined,
+                        pdfLabel: asStr(sf.pdfLabel, 200) || undefined, required: asBool(sf.required),
+                    };
+                    if (sType === 'text') sub.suggestions = asOptions(sf.suggestions)?.length ? asOptions(sf.suggestions) : undefined;
                     if (sType === 'select') {
                         sub.options = asOptions(sf.options) ?? [];
                         if (sub.options.length === 0) errors.push(`${sWhere}: a dropdown needs at least one option.`);
@@ -573,19 +615,79 @@ export function filledCount(field: TemplateField, data: ReportValues): number {
     }
 }
 
-/** Labels of required fields that are still empty, grouped as "Section: Field". */
-export function missingRequired(template: ReportTemplate, data: ReportValues): string[] {
-    const missing: string[] = [];
-    for (const section of template.sections) {
-        for (const field of section.fields) {
-            const need = Math.max(field.required ? 1 : 0, field.minItems ?? 0);
-            const have = filledCount(field, data);
-            if (have < need) {
-                missing.push(`${section.title}: ${field.label}${need > 1 ? ` (at least ${need})` : ''}`);
-            }
-        }
+/** Something the user still has to fill in, attached to the field it belongs to. */
+export interface FieldProblem {
+    fieldId: string;
+    message: string;
+}
+
+const subfieldFilled = (item: ListItem, sf: TemplateSubfield): boolean => {
+    const v = item[sf.id];
+    return typeof v === 'string' ? v.trim() !== '' : typeof v === 'number';
+};
+
+/** What is still missing in one field (empty when it is complete). */
+export function fieldProblems(field: TemplateField, data: ReportValues): FieldProblem[] {
+    const problems: FieldProblem[] = [];
+    const add = (message: string) => problems.push({ fieldId: field.id, message });
+    const need = Math.max(field.required ? 1 : 0, field.minItems ?? 0);
+
+    if (field.type === 'dateRange' || field.type === 'timeRange') {
+        if (!field.required) return problems;
+        const isDate = field.type === 'dateRange';
+        if (!textValue(data, field.id).trim()) add(`${field.label}: choose the ${isDate ? 'start date' : 'start time'}.`);
+        if (!textValue(data, field.endId ?? `${field.id}End`).trim()) add(`${field.label}: choose the ${isDate ? 'end date' : 'end time'}.`);
+        return problems;
     }
-    return missing;
+
+    if (field.type === 'preparedBy') {
+        if (!field.required) return problems;
+        const first = listValue(data, field.id)[0] ?? {};
+        if (!textValue(first, 'name').trim()) add(`${field.label}: enter the name.`);
+        if (!textValue(first, 'designation').trim()) add(`${field.label}: enter the designation.`);
+        return problems;
+    }
+
+    if (field.type === 'list') {
+        const subfields = field.subfields ?? [];
+        const items = listValue(data, field.id);
+        const filled = items.filter((item) => filledItem(item, subfields)).length;
+        if (filled < need) {
+            add(need > 1 ? `${field.label}: add at least ${need} entries.` : `${field.label}: add at least one ${(field.itemLabel ?? 'entry').toLowerCase()}.`);
+        }
+        const requiredSubs = subfields.filter((sf) => sf.required);
+        items.forEach((item, i) => {
+            const empty = requiredSubs.filter((sf) => !subfieldFilled(item, sf)).map((sf) => sf.label);
+            if (empty.length > 0) add(`${field.itemLabel ?? 'Entry'} ${i + 1}: fill in ${empty.join(', ')}.`);
+        });
+        return problems;
+    }
+
+    const have = filledCount(field, data);
+    if (have < need) {
+        if (field.type === 'photos') add(`${field.label}: upload at least ${need} photo${need > 1 ? 's' : ''}.`);
+        else if (field.type === 'attachments') add(`${field.label}: upload at least one file.`);
+        else if (field.type === 'table') add(need > 1 ? `${field.label}: fill in at least ${need} rows.` : `${field.label}: fill in at least one row.`);
+        else if (field.type === 'select') add(`${field.label}: choose an option.`);
+        else add(`${field.label}: this field is required.`);
+    }
+    return problems;
+}
+
+/** Everything still missing in one section, in field order. */
+export function sectionProblems(section: TemplateSection, data: ReportValues): FieldProblem[] {
+    return section.fields.flatMap((field) => fieldProblems(field, data));
+}
+
+/** Index of the first section that is not complete, or -1 when all are. */
+export function firstIncompleteSection(template: ReportTemplate, data: ReportValues): number {
+    return template.sections.findIndex((section) => sectionProblems(section, data).length > 0);
+}
+
+/** Everything still missing in the report, as "Section: problem". */
+export function missingRequired(template: ReportTemplate, data: ReportValues): string[] {
+    return template.sections.flatMap((section) =>
+        sectionProblems(section, data).map((p) => `${section.title}: ${p.message}`));
 }
 
 /** Replaces {{fieldId}} / {{fieldId|fallback}} with formatted values. */

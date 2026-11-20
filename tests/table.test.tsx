@@ -39,7 +39,7 @@ describe('table fields', () => {
         const data = { budget: [{ id: 'a', rowLabel: 'Honorarium', planned: '1,000', actual: '900' }, { id: 'b', rowLabel: 'Refreshments', planned: '500' }] };
         expect(tableTotals(field, tableRows(field, data))).toEqual({ planned: '1500', actual: '900' });
         expect(filledCount(field, data)).toBe(2);
-        expect(missingRequired(t, {})).toEqual(['Budget: Budget']);
+        expect(missingRequired(t, {})).toEqual(['Budget: Budget: fill in at least one row.']);
     });
 
     it('AI fill keeps only known row labels and merges by label', () => {

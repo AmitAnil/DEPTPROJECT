@@ -89,7 +89,11 @@ export default function ScalarField({ field, data, onUpdate }: Props) {
                 <div className="space-y-2">
                     <FieldLabel field={field} htmlFor={id} />
                     <input id={id} type={type} min={type === 'number' ? 0 : undefined} value={value} placeholder={field.placeholder}
+                        list={field.suggestions?.length ? `${id}-suggestions` : undefined}
                         onChange={(e) => set(field.id, e.target.value)} className={inputClass} />
+                    {field.suggestions?.length ? (
+                        <datalist id={`${id}-suggestions`}>{field.suggestions.map((o) => <option key={o} value={o} />)}</datalist>
+                    ) : null}
                 </div>
             );
         }

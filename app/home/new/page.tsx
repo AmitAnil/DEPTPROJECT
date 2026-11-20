@@ -9,7 +9,7 @@ import AiAssistant from '@/components/AiAssistant';
 import SectionForm from '@/components/template/SectionForm';
 import { logActivity } from '@/lib/logger';
 import { normalizeReportData, type ReportStatus } from '@/lib/reportData';
-import { missingRequired, reportTitleFrom, type ReportValues, type TemplateRecord } from '@/lib/template';
+import { firstIncompleteSection, sectionProblems, reportTitleFrom, type ReportValues, type TemplateRecord } from '@/lib/template';
 import { loadActiveTemplate, loadTemplate } from '@/lib/templateStore';
 import { mergeAiValues } from '@/lib/aiFill';
 import { kickEmailDispatch } from '@/lib/notifyClient';
@@ -62,6 +62,32 @@ function ReportEditorContent() {
     // Drafts are editable by the owner and by accepted "Editor" collaborators only.
     // Submitted/approved reports are locked (the database enforces the same rule).
     const readOnly = status !== 'draft' || access === 'viewer' || access === 'admin' || !!loadError;
+
+    // A section must be complete before moving past it. `errorSectionId` is the section whose
+    // missing fields are highlighted; `errorTick` changes on every blocked attempt so the form scrolls to the list.
+    const [errorSectionId, setErrorSectionId] = useState<string | null>(null);
+    const [errorTick, setErrorTick] = useState(0);
+    const showErrorsFor = (sectionId: string) => {
+        setActiveSectionId(sectionId);
+        setViewMode('editor');
+        setErrorSectionId(sectionId);
+        setErrorTick((t) => t + 1);
+    };
+    /** Opens a section; moving forward is only allowed once every earlier section is complete. */
+    const goToSection = (sectionId: string) => {
+        const target = sections.findIndex((s) => s.id === sectionId);
+        if (readOnly || !template || target <= activeIndex) {
+            setActiveSectionId(sectionId);
+            return;
+        }
+        const blocked = sections.slice(0, target).findIndex((s) => sectionProblems(s, reportData).length > 0);
+        if (blocked === -1) {
+            setErrorSectionId(null);
+            setActiveSectionId(sectionId);
+        } else {
+            showErrorsFor(sections[blocked].id);
+        }
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -302,9 +328,10 @@ function ReportEditorContent() {
     const handleMarkCompleted = async (currentData: ReportValues) => {
         // Also wait for an in-flight autosave, or both would write the same version.
         if (!isInitialLoadDone || readOnly || isSaving || savingRef.current || conflictError || !template) return;
-        const missing = missingRequired(template, currentData);
-        if (missing.length > 0) {
-            alert(`Please complete these before submitting:\n\n• ${missing.join('\n• ')}`);
+        const incomplete = firstIncompleteSection(template, currentData);
+        if (incomplete !== -1) {
+            showErrorsFor(template.sections[incomplete].id);
+            alert(`Some fields are still empty. Please complete "${template.sections[incomplete].title}" first (the missing fields are marked in red).`);
             return;
         }
         if (!confirm("Submit this report for admin review? You will not be able to edit it unless the admin sends it back.")) return;
@@ -352,7 +379,7 @@ function ReportEditorContent() {
     return (
         <ReportLayout
             activeSectionId={activeSection?.id ?? ''}
-            onSectionChange={setActiveSectionId}
+            onSectionChange={goToSection}
             template={template}
             previewData={reportData}
             onSaveDraft={handleSaveDraft}
@@ -410,7 +437,9 @@ function ReportEditorContent() {
                             data={reportData}
                             onUpdate={handleDataUpdate}
                             uploadFolder={uploadFolder}
-                            onNext={activeIndex < sections.length - 1 ? () => setActiveSectionId(sections[activeIndex + 1].id) : undefined}
+                            onNext={activeIndex < sections.length - 1 ? () => goToSection(sections[activeIndex + 1].id) : undefined}
+                            problems={!readOnly && errorSectionId === activeSection.id ? sectionProblems(activeSection, reportData) : []}
+                            errorTick={errorTick}
                             onFinish={() => handleMarkCompleted(reportData)}
                             canFinish={!readOnly}
                         />

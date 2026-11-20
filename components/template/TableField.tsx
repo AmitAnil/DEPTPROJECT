@@ -42,10 +42,14 @@ export default function TableField({ field, data, onUpdate }: Props) {
         if (sf.type === 'textarea') {
             return <textarea aria-label={label} rows={2} className={`${cell} resize-y`} value={value} onChange={(e) => setCell(rowIndex, sf.id, e.target.value)} />;
         }
+        const listId = sf.suggestions?.length ? `t-${field.id}-${sf.id}-suggestions` : undefined;
         return (
-            <input aria-label={label} className={`${cell} ${sf.type === 'number' ? 'text-right' : ''}`} value={value} placeholder={sf.placeholder}
-                type={sf.type === 'number' ? 'number' : sf.type === 'date' ? 'date' : 'text'} min={sf.type === 'number' ? 0 : undefined}
-                onChange={(e) => setCell(rowIndex, sf.id, e.target.value)} />
+            <>
+                <input aria-label={label} className={`${cell} ${sf.type === 'number' ? 'text-right' : ''}`} value={value} placeholder={sf.placeholder}
+                    type={sf.type === 'number' ? 'number' : sf.type === 'date' ? 'date' : 'text'} min={sf.type === 'number' ? 0 : undefined}
+                    list={listId} onChange={(e) => setCell(rowIndex, sf.id, e.target.value)} />
+                {listId && rowIndex === 0 && <datalist id={listId}>{sf.suggestions!.map((o) => <option key={o} value={o} />)}</datalist>}
+            </>
         );
     };
 

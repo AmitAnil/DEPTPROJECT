@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import type { Organizer } from '@/lib/reportData';
-import { listValue, textValue, type ReportValues } from '@/lib/template';
+import { FACULTY_DESIGNATIONS, listValue, textValue, type ReportValues } from '@/lib/template';
 import StoredImage from '@/components/StoredImage';
 
 const EMPTY_ORGANIZER: Organizer = { name: '', designation: '', signatureImage: '' };
@@ -72,7 +72,7 @@ export default function PreparedByField({ fieldId, data, onUpdate }: Props) {
             <div className="space-y-6">
                 {/* Name Input */}
                 <div className="space-y-2">
-                    <label className="text-sm font-bold text-gray-700">Name</label>
+                    <label className="text-sm font-bold text-gray-700">Name <span className="text-red-500">*</span></label>
                     <input
                         type="text"
                         value={organizers[0].name || ''}
@@ -84,9 +84,12 @@ export default function PreparedByField({ fieldId, data, onUpdate }: Props) {
 
                 {/* Designation Input */}
                 <div className="space-y-2">
-                    <label className="text-sm font-bold text-gray-700">Designation</label>
+                    <label className="text-sm font-bold text-gray-700">Designation <span className="text-red-500">*</span></label>
+                    <datalist id={`${fieldId}-designations`}>{FACULTY_DESIGNATIONS.map((d) => <option key={d} value={d} />)}</datalist>
                     <input
                         type="text"
+                        list={`${fieldId}-designations`}
+                        placeholder="Pick or type your designation"
                         value={organizers[0].designation || ''}
                         onChange={(e) => updateOrganizer('designation', e.target.value)}
                         className="w-full p-3 border rounded-lg bg-gray-50 outline-none focus:ring-2 focus:ring-[#3b5998]"
