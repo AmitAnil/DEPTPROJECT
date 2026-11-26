@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 import { DEPARTMENT_NAME } from '@/lib/constants';
+import PendingChecklist from '@/components/PendingChecklist';
+import EventCalendar from '@/components/calendar/EventCalendar';
 import {
     Home,
     FilePlus,
@@ -15,7 +17,8 @@ import {
     User,
     Settings as SettingsIcon,
     LogOut,
-    Loader2
+    Loader2,
+    ShieldCheck
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -25,6 +28,8 @@ export default function DashboardPage() {
     const [isProfileOpen, setIsProfileOpen] = useState(false);
     const [userName, setUserName] = useState<string>("Faculty");
     const [isLoading, setIsLoading] = useState(true);
+    const [userId, setUserId] = useState<string | null>(null);
+    const [isAdmin, setIsAdmin] = useState(false);
 
     // Fetch User Data on Load
     useEffect(() => {
@@ -42,10 +47,12 @@ export default function DashboardPage() {
                 // Try to get their actual name from the profiles table
                 const { data: profileData } = await supabase
                     .from('profiles')
-                    .select('full_name')
+                    .select('full_name, role, is_active')
                     .eq('id', user.id)
                     .single();
 
+                setUserId(user.id);
+                setIsAdmin(profileData?.role === 'admin' && profileData?.is_active !== false);
                 if (profileData && profileData.full_name) {
                     // Extract first name for a friendly welcome
                     setUserName(profileData.full_name.split(' ')[0]);
@@ -113,6 +120,16 @@ export default function DashboardPage() {
                         <FolderOpen size={20} />
                         <span className="font-medium text-sm">Open</span>
                     </button>
+
+                    {isAdmin && (
+                        <button
+                            onClick={() => router.push('/admin')}
+                            className="w-full flex items-center space-x-4 px-4 py-3 rounded-xl text-sm font-medium text-white/70 hover:bg-white/10 hover:text-white transition-colors"
+                        >
+                            <ShieldCheck size={20} />
+                            <span className="font-medium text-sm">Admin dashboard</span>
+                        </button>
+                    )}
                 </nav>
             </aside>
 
@@ -163,45 +180,45 @@ export default function DashboardPage() {
                 </header>
 
                 {/* Welcome Dashboard Content */}
-                <main className="flex-1 p-12 overflow-y-auto flex items-center justify-center">
-
-                    <div className="max-w-3xl w-full flex flex-col items-center text-center animate-in slide-in-from-bottom-4 fade-in duration-700 pb-20">
-                        {/* Big Icon */}
-                        <div className="w-24 h-24 bg-blue-100 rounded-full flex items-center justify-center mb-8 shadow-inner">
-                            <FileText size={48} className="text-[#3168d8]" />
+                <main className="flex-1 p-8 overflow-y-auto">
+                    <div className="max-w-7xl mx-auto space-y-8 pb-12">
+                        {/* Welcome + quick actions */}
+                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 animate-in fade-in duration-500">
+                            <div>
+                                <h1 className="text-3xl font-extrabold text-[#112a53] tracking-tight">Welcome, {userName}!</h1>
+                                <p className="text-sm text-gray-500 mt-1">DeptDocs: activity reports for the {DEPARTMENT_NAME}.</p>
+                            </div>
+                            <div className="flex flex-wrap gap-3">
+                                <button
+                                    onClick={() => router.push('/home/new')}
+                                    className="bg-[#3168d8] hover:bg-[#2552b0] text-white px-5 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all shadow-md hover:shadow-lg"
+                                >
+                                    <FilePlus size={18} />
+                                    <span>Create New Report</span>
+                                </button>
+                                <button
+                                    onClick={() => router.push('/home/open')}
+                                    className="bg-white border-2 border-gray-200 text-gray-700 hover:border-[#3168d8] hover:text-[#3168d8] px-5 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all"
+                                >
+                                    <FolderOpen size={18} />
+                                    <span>Open Existing</span>
+                                </button>
+                            </div>
                         </div>
 
-                        {/* Headings */}
-                        <h1 className="text-5xl font-extrabold text-[#112a53] mb-4 tracking-tight">
-                            Welcome, {userName}!
-                        </h1>
-                        <h2 className="text-3xl font-bold text-[#3168d8] mb-6">
-                            DeptDocs
-                        </h2>
-                        <p className="text-lg text-gray-500 mb-12 max-w-xl leading-relaxed">
-                            A streamlined, real-time activity report generator built exclusively for the {DEPARTMENT_NAME}.
-                        </p>
-
-                        {/* Action Buttons */}
-                        <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6">
-                            <button
-                                onClick={() => router.push('/home/new')}
-                                className="bg-[#3168d8] hover:bg-[#2552b0] text-white px-8 py-4 rounded-2xl font-bold text-lg flex items-center space-x-3 transition-all shadow-lg hover:shadow-xl hover:-translate-y-1 w-full sm:w-auto justify-center"
-                            >
-                                <FilePlus size={24} />
-                                <span>Create New Report</span>
-                            </button>
-
-                            <button
-                                onClick={() => router.push('/home/open')}
-                                className="bg-white border-2 border-gray-200 text-gray-700 hover:border-[#3168d8] hover:text-[#3168d8] px-8 py-4 rounded-2xl font-bold text-lg flex items-center space-x-3 transition-all shadow-sm hover:shadow-md hover:-translate-y-1 w-full sm:w-auto justify-center"
-                            >
-                                <FolderOpen size={24} />
-                                <span>Open Existing</span>
-                            </button>
-                        </div>
+                        {userId && (
+                            <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start">
+                                {/* Left: department events (admins schedule them here) */}
+                                <div className="xl:col-span-3">
+                                    <EventCalendar userId={userId} isAdmin={isAdmin} />
+                                </div>
+                                {/* Right: what this user still has to do */}
+                                <div className="xl:col-span-2">
+                                    <PendingChecklist userId={userId} isAdmin={isAdmin} />
+                                </div>
+                            </div>
+                        )}
                     </div>
-
                 </main>
             </div>
         </div>

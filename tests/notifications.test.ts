@@ -11,13 +11,13 @@ vi.mock('nodemailer', () => {
 import { notificationEmail } from '@/lib/email';
 import { dispatchNotificationEmails } from '@/lib/notificationDispatch';
 
-function fakeAdmin(rows: Record<string, unknown>[]) {
-    const updates: { id: string; patch: Record<string, unknown> }[] = [];
+function fakeAdmin(rows: Record<string, unknown>[], outbound: Record<string, unknown>[] = []) {
+    const updates: { id: string; patch: Record<string, unknown>; table?: string }[] = [];
     const client = {
-        rpc: vi.fn(async () => ({ data: rows, error: null })),
-        from: () => ({
+        rpc: vi.fn(async (name: string) => ({ data: name === 'claim_outbound_emails' ? outbound : rows, error: null })),
+        from: (table: string) => ({
             update: (patch: Record<string, unknown>) => ({
-                eq: async (_col: string, id: string) => { updates.push({ id, patch }); return { error: null }; },
+                eq: async (_col: string, id: string) => { updates.push({ id, patch, table }); return { error: null }; },
             }),
         }),
     };
@@ -73,5 +73,31 @@ describe('notification emails', () => {
         const last = nodemailer.__sendMail.mock.calls.at(-1)![0];
         expect(last.text).not.toContain('Open in DeptDocs:');
         expect(last.html).not.toContain('href=');
+    });
+
+    it('also emails organizers who have no account yet, with a link to sign up', async () => {
+        process.env.SMTP_HOST = 'smtp.example.edu';
+        process.env.SMTP_FROM = 'DeptDocs <christadse@gmail.com>';
+        process.env.SITE_URL = 'https://deptdocs.example.edu';
+        const nodemailer = await import('nodemailer') as unknown as { __sendMail: ReturnType<typeof vi.fn> };
+        nodemailer.__sendMail.mockClear();
+        const { client, updates } = fakeAdmin([], [
+            { id: 'o1', to_email: 'guest@example.com', to_name: 'Dr. Guest', title: 'Event scheduled: "Talk"', message: 'Please sign up', link: '/signup' },
+            { id: 'o2', to_email: 'bounce@example.edu', to_name: null, title: 'Reminder', message: 'x', link: null },
+        ]);
+        const result = await dispatchNotificationEmails(client);
+        expect(result).toMatchObject({ sent: 1, failed: 1 });
+        const mail = nodemailer.__sendMail.mock.calls[0][0] as { to: string; text: string };
+        expect(mail.to).toBe('guest@example.com');
+        expect(mail.text).toContain('https://deptdocs.example.edu/signup');
+        expect(updates.find((u) => u.id === 'o1')).toMatchObject({ table: 'outbound_emails', patch: { email_status: 'sent' } });
+        expect(updates.find((u) => u.id === 'o2')).toMatchObject({ table: 'outbound_emails', patch: { email_status: 'failed' } });
+    });
+
+    it('marks queued emails to addresses without an account as skipped when SMTP is off', async () => {
+        const { client, updates } = fakeAdmin([], [{ id: 'o1', to_email: 'guest@example.com', to_name: null, title: 'T', message: null, link: null }]);
+        const result = await dispatchNotificationEmails(client);
+        expect(result).toMatchObject({ skipped: 1, sent: 0 });
+        expect(updates[0]).toMatchObject({ table: 'outbound_emails', patch: { email_status: 'skipped' } });
     });
 });

@@ -300,3 +300,188 @@ values ('00000000-0000-0000-0000-0000000000d0', 'Admin', 'REPORT_APPROVED', 'app
 reset role;
 select pg_temp.check((select user_name from public.activity_logs where description = 'approved "Everything"') = 'Mallory', 'activity entries show the real author');
 select pg_temp.check((select created_at from public.activity_logs where description = 'approved "Everything"') > now() - interval '1 minute', 'activity entries cannot be backdated');
+
+-- ---- 2026-11-26: event calendar
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+update public.profiles set is_active = true where id = '00000000-0000-0000-0000-00000000000a';
+
+-- Faculty can see the calendar but not add to it.
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+do $$ begin
+    perform public.schedule_event('Sneaky', '2026-12-10', '10:00', '12:00', '00000000-0000-0000-0000-0000000000b0', null, '{}', '2026-11-26');
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'faculty could schedule an event'; end if; end $$;
+do $$ begin
+    insert into public.events (title, event_date, organizer_id) values ('Direct', '2026-12-10', '00000000-0000-0000-0000-0000000000b0');
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'faculty could insert an event'; end if; end $$;
+do $$ begin
+    perform public.queue_event_reminders('2026-12-10');
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'faculty could trigger reminders'; end if; end $$;
+reset role;
+select pg_temp.check(true, 'faculty cannot schedule events, insert them directly, or trigger reminders');
+
+-- An admin schedules an event for Alice: event + draft report owned by Alice + email to Alice.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('AI Workshop', '2026-12-10', '10:00', '12:00', '00000000-0000-0000-0000-0000000000a1',
+    null, '{"activityTitle":"AI Workshop","date":"2026-12-10"}', '2026-11-26');
+do $$ begin
+    perform public.schedule_event('Backwards', '2026-12-10', '12:00', '10:00', '00000000-0000-0000-0000-0000000000a1', null, '{}', '2026-11-26');
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'end before start was accepted'; end if; end $$;
+reset role;
+select pg_temp.check((select r.owner_id::text || '/' || r.status::text || '/' || (r.data->>'date')
+                      from public.events e join public.reports r on r.id = e.report_id where e.title = 'AI Workshop')
+                     = '00000000-0000-0000-0000-0000000000a1/draft/2026-12-10', 'scheduling creates a prefilled draft report owned by the organizer');
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000a1'
+                      and title = 'Event scheduled: "AI Workshop"' and email_status = 'pending') = 1, 'the organizer is emailed when an event is scheduled');
+select pg_temp.check((select last_reminder_on from public.events where title = 'AI Workshop') = '2026-11-26', 'no second email on the day it was scheduled');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+select pg_temp.check((select count(*) from public.events where title = 'AI Workshop') = 1, 'everyone signed in can see the calendar');
+reset role;
+
+-- Admins may upload the NFA into the draft report; others may not.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check(public.storage_can_write_report_file((select report_id::text from public.events where title = 'AI Workshop') || '/approvalFiles/nfa.pdf'),
+    'an admin can upload the NFA into the draft report');
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+select pg_temp.check(not public.storage_can_write_report_file((select report_id::text from public.events where title = 'AI Workshop') || '/approvalFiles/nfa.pdf'),
+    'other faculty cannot upload into it');
+reset role;
+
+-- Reminders: daily from 7 days before, after the event too, until the report is submitted.
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.check(public.queue_event_reminders('2026-12-02') = 0, 'no reminder 8 days before the event');
+select pg_temp.check(public.queue_event_reminders('2026-12-03') = 1, 'first reminder 7 days before the event');
+select pg_temp.check(public.queue_event_reminders('2026-12-03') = 0, 'at most one reminder per day');
+select pg_temp.check(public.queue_event_reminders('2026-12-04') = 1, 'a reminder every day');
+select pg_temp.check(public.queue_event_reminders('2026-12-12') = 1, 'reminders continue after the event');
+select pg_temp.check((select title from public.notifications where user_id = '00000000-0000-0000-0000-0000000000a1' order by created_at desc, title limit 1)
+                     like 'Report pending: "AI Workshop"', 'after the event the reminder says the report is pending');
+select pg_temp.check(exists (select 1 from public.notifications where message like '%(2 days ago)%'), 'the reminder says how long ago the event was');
+update public.reports set status = 'completed' where id = (select report_id from public.events where title = 'AI Workshop');
+select pg_temp.check(public.queue_event_reminders('2026-12-13') = 0, 'reminders stop once the report is submitted');
+
+-- Cancelling: a draft report goes with the event; a submitted one is kept.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('Guest Talk', '2026-12-20', null, null, '00000000-0000-0000-0000-0000000000c0', null, '{}', '2026-11-26');
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+create temp table guest_talk as select id, report_id from public.events where title = 'Guest Talk';
+create temp table workshop as select id, report_id from public.events where title = 'AI Workshop';
+grant select on guest_talk, workshop to authenticated;
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c0');
+do $$ begin
+    perform public.cancel_event((select id from guest_talk));
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'faculty could cancel an event'; end if; end $$;
+reset role;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select public.cancel_event((select id from guest_talk));
+select public.cancel_event((select id from workshop));
+reset role;
+select pg_temp.check(not exists (select 1 from public.events where title in ('Guest Talk', 'AI Workshop')), 'admins can cancel events');
+select pg_temp.check(not exists (select 1 from public.reports where id = (select report_id from guest_talk)), 'cancelling removes a draft report');
+select pg_temp.check(exists (select 1 from public.reports where id = (select report_id from workshop)), 'cancelling keeps a submitted report');
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000c0' and title = 'Event cancelled: "Guest Talk"') = 1,
+    'the organizer is told when an event is cancelled');
+
+-- ---- 2026-11-27: organizers typed as an email address
+-- A typed email of a DeptDocs user works like picking that user.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('Typed member', '2026-12-15', '09:00', null, null, null, '{}', '2026-11-27', '  BOB@christuniversity.in ');
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.check((select e.organizer_id::text || '/' || (e.report_id is not null)::text from public.events e where e.title = 'Typed member')
+                     = '00000000-0000-0000-0000-0000000000b0/true', 'a typed email of a member assigns that member and creates their report');
+
+-- Someone without an account.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('Industry Talk', '2026-12-20', '11:00', '12:00', null, null,
+    '{"activityTitle":"Industry Talk","date":"2026-12-20"}', '2026-11-27', 'Guest.Speaker@Example.com', 'Dr. Guest');
+do $$ begin
+    perform public.schedule_event('Bad email', '2026-12-20', '11:00', null, null, null, '{}', '2026-11-27', 'not-an-email');
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'an invalid email was accepted'; end if; end $$;
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.check((select organizer_id is null and organizer_email = 'guest.speaker@example.com' and report_id is null
+                             and report_data->>'date' = '2026-12-20' from public.events where title = 'Industry Talk'),
+    'an event can name an organizer without an account (email kept, report data held)');
+select pg_temp.check((select count(*) from public.outbound_emails where to_email = 'guest.speaker@example.com'
+                      and title = 'Event scheduled: "Industry Talk"' and link = '/signup' and email_status = 'pending') = 1,
+    'the email address is emailed with sign-up instructions');
+select pg_temp.check(exists (select 1 from public.signup_allowlist where entry = 'guest.speaker@example.com'),
+    'their email is allowed to sign up');
+
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000b0');
+do $$ begin
+    perform count(*) from public.outbound_emails;
+    raise exception 'SHOULD_FAIL';
+exception when others then if sqlerrm = 'SHOULD_FAIL' then raise exception 'users could read the outbound email queue'; end if; end $$;
+reset role;
+select pg_temp.check(true, 'users cannot read the outbound email queue');
+
+-- Admins can store the NFA in the event's folder before there is a report.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select pg_temp.check(public.storage_can_write_report_file((select id::text from public.events where title = 'Industry Talk') || '/approvalFiles/nfa.pdf'),
+    'an admin can upload the NFA of an event without a report');
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+insert into storage.objects (bucket_id, name, owner_id)
+select 'reports', id::text || '/approvalFiles/nfa.pdf', '00000000-0000-0000-0000-00000000000a' from public.events where title = 'Industry Talk';
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000c0');
+select pg_temp.check(not exists (select 1 from storage.objects where name like '%/approvalFiles/nfa.pdf'
+                                 and name like (select id::text from public.events where title = 'Industry Talk') || '%'),
+    'other people cannot read the NFA of someone else''s event');
+reset role;
+
+-- Reminders reach the email address until they sign up.
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.check(public.queue_event_reminders('2026-12-13') >= 1, 'organizers without an account get reminders');
+select pg_temp.check((select count(*) from public.outbound_emails where to_email = 'guest.speaker@example.com'
+                      and title = 'Reminder: "Industry Talk" is in 7 days' and message like '%Sign up to DeptDocs with guest.speaker@example.com%') = 1,
+    'the reminder tells them to sign up with that email');
+select pg_temp.check(public.queue_event_reminders('2026-12-13') = 0, 'still at most one reminder per day');
+
+-- Signing up with that email moves the event and a prefilled report into the new account.
+insert into auth.users values ('00000000-0000-0000-0000-0000000000e0', 'guest.speaker@example.com');
+insert into public.profiles (id, full_name, email, role) values ('00000000-0000-0000-0000-0000000000e0', 'Guest', 'Guest.Speaker@example.com', 'faculty');
+select pg_temp.check((select e.organizer_id = '00000000-0000-0000-0000-0000000000e0' and r.owner_id = e.organizer_id and r.status::text = 'draft'
+                             and r.data->>'date' = '2026-12-20' and e.report_data is null
+                      from public.events e join public.reports r on r.id = e.report_id where e.title = 'Industry Talk'),
+    'signing up with the email claims the event and its prefilled report');
+select pg_temp.check((select count(*) from public.notifications where user_id = '00000000-0000-0000-0000-0000000000e0'
+                      and title = 'Event assigned to you: "Industry Talk"') = 1, 'the new user is told about the event');
+select pg_temp.as_user('00000000-0000-0000-0000-0000000000e0');
+select pg_temp.check(exists (select 1 from storage.objects where name like (select id::text from public.events where title = 'Industry Talk') || '/approvalFiles/nfa.pdf'),
+    'the organizer can read the NFA once they have signed up');
+reset role;
+select set_config('request.jwt.claim.sub', '', false);
+select pg_temp.check(public.queue_event_reminders('2026-12-14') >= 1, 'reminders continue after signing up');
+select pg_temp.check(exists (select 1 from public.notifications where user_id = '00000000-0000-0000-0000-0000000000e0'
+                             and title = 'Reminder: "Industry Talk" is in 6 days'),
+    'after signing up, reminders arrive in DeptDocs and by email as usual');
+
+-- Cancelling an event of someone without an account emails them.
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('Outside Workshop', '2026-12-22', null, null, null, null, '{}', '2026-11-27', 'visitor@example.org');
+select public.cancel_event((select id from public.events where title = 'Outside Workshop'));
+reset role;
+select pg_temp.check((select count(*) from public.outbound_emails where to_email = 'visitor@example.org' and title = 'Event cancelled: "Outside Workshop"') = 1,
+    'cancelling tells an organizer without an account');
+
+-- With an empty allow-list (open sign-up), scheduling must not close sign-up for everyone else.
+select set_config('request.jwt.claim.sub', '', false);
+create temp table saved_allowlist as select * from public.signup_allowlist;
+delete from public.signup_allowlist;
+select pg_temp.as_user('00000000-0000-0000-0000-00000000000a');
+select * from public.schedule_event('Open signup', '2026-12-23', null, null, null, null, '{}', '2026-11-27', 'someone@example.net');
+reset role;
+select pg_temp.check(not exists (select 1 from public.signup_allowlist), 'an open sign-up stays open');
+insert into public.signup_allowlist select * from saved_allowlist;

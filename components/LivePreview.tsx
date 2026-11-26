@@ -6,6 +6,7 @@ import { ReportPDF } from './ReportPDF';
 import { normalizeReportData } from '@/lib/reportData';
 import { resolveForBrowser } from '@/lib/storageClient';
 import { DEFAULT_TEMPLATE, type ReportTemplate } from '@/lib/template';
+import { describeSkipped, renderWithFallback, type SkippedPart } from '@/lib/previewFallback';
 
 const DEBOUNCE_MS = 800;
 
@@ -14,6 +15,9 @@ export default function LivePreview({ data, template = DEFAULT_TEMPLATE }: { dat
     const [activePdfUrl, setActivePdfUrl] = useState<string | null>(null);
     const [nextPdfUrl, setNextPdfUrl] = useState<string | null>(null);
     const [isUpdating, setIsUpdating] = useState(false);
+    // Parts of the report that could not be drawn and were left out of the preview.
+    const [skipped, setSkipped] = useState<SkippedPart[]>([]);
+    const [failed, setFailed] = useState(false);
     const generation = useRef(0);
     const urls = useRef(new Set<string>());
 
@@ -23,13 +27,20 @@ export default function LivePreview({ data, template = DEFAULT_TEMPLATE }: { dat
             setIsUpdating(true);
             try {
                 const resolved = await resolveForBrowser(normalizeReportData(data));
-                const blob = await pdf(<ReportPDF data={resolved} template={template} />).toBlob();
+                // If something cannot be drawn, show the rest and name what was left out.
+                const result = await renderWithFallback(template, (t) => pdf(<ReportPDF data={resolved} template={t} />).toBlob());
                 if (run !== generation.current) return; // a newer edit started meanwhile
-                const url = URL.createObjectURL(blob);
+                if (result.skipped.length > 0) {
+                    console.warn(`PDF preview: left out ${describeSkipped(result.skipped)} (${result.error})`);
+                }
+                setSkipped(result.skipped);
+                setFailed(false);
+                const url = URL.createObjectURL(result.output);
                 urls.current.add(url);
                 setNextPdfUrl(url);
             } catch (error) {
-                console.error('PDF preview error:', error);
+                console.warn('PDF preview error:', error);
+                if (run === generation.current) setFailed(true);
             } finally {
                 if (run === generation.current) setIsUpdating(false);
             }
@@ -61,6 +72,14 @@ export default function LivePreview({ data, template = DEFAULT_TEMPLATE }: { dat
             {isUpdating && (
                 <div className="absolute top-4 right-4 bg-black/60 text-white text-[10px] px-3 py-1 rounded-full uppercase tracking-widest z-50 animate-pulse shadow-md">
                     Updating...
+                </div>
+            )}
+
+            {(skipped.length > 0 || failed) && (
+                <div role="status" className="absolute bottom-3 left-3 right-3 z-50 rounded-lg bg-amber-50 border border-amber-300 px-3 py-2 text-xs text-amber-900 shadow">
+                    {failed
+                        ? 'The preview could not be drawn. Your work is saved; please tell your admin what you last changed.'
+                        : <>Could not draw <b>{describeSkipped(skipped)}</b> in the preview, so it is left out for now. Check that content (for example a damaged image or unusual characters).</>}
                 </div>
             )}
 

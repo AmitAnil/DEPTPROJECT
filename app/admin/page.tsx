@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
@@ -120,6 +120,31 @@ export default function AdminDashboard() {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- initial data load
         void fetchAdminData();
     }, [fetchAdminData]);
+
+    const openReview = useCallback(async (report: Report) => {
+        setPreviewTemplate(null);
+        setPreviewReport(report);
+        setIsRejecting(false);
+        setPreviewTemplate((await loadTemplate(supabase, report.template_id)).definition);
+    }, [supabase]);
+
+    // Deep link from the home checklist: /admin?review=<report id> opens that report once loaded.
+    const reviewLinkHandled = useRef(false);
+    useEffect(() => {
+        if (loading || reviewLinkHandled.current) return;
+        const id = new URLSearchParams(window.location.search).get('review');
+        if (!id) return;
+        reviewLinkHandled.current = true;
+        router.replace('/admin');
+        const report = completedReports.find((r) => r.id === id);
+        if (report) {
+            // The Reports tab is the default on load, so the review opens on top of it.
+            // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time action for the deep link, after data loads
+            void openReview(report);
+        } else {
+            alert('This report is no longer waiting for review. Another admin may have approved or returned it.');
+        }
+    }, [loading, completedReports, openReview, router]);
 
     const formatTime = (dateString: string) => {
         return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(dateString));
@@ -319,12 +344,7 @@ export default function AdminDashboard() {
                                                     </p>
                                                 </div>
                                                 <button
-                                                    onClick={async () => {
-                                                        setPreviewTemplate(null);
-                                                        setPreviewReport(report);
-                                                        setIsRejecting(false);
-                                                        setPreviewTemplate((await loadTemplate(supabase, report.template_id)).definition);
-                                                    }}
+                                                    onClick={() => void openReview(report)}
                                                     className="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl text-sm font-bold hover:bg-gray-200 flex items-center gap-2 transition-colors"
                                                 >
                                                     <ExternalLink size={16} /> Review
