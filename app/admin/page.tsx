@@ -163,7 +163,9 @@ export default function AdminDashboard() {
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || "Failed to push to Google Drive");
 
-            alert(`Report approved and archived in Google Drive.\n\nLink: ${data.link}`);
+            const missed: string[] = Array.isArray(data.missed) ? data.missed : [];
+            alert(`Report approved and saved in Google Drive (a folder with the PDF and the original files).\n\nFolder: ${data.link}`
+                + (missed.length ? `\n\nThese files could not be copied and are only in DeptDocs:\n• ${missed.join('\n• ')}` : ''));
             setPreviewReport(null);
             fetchAdminData();
         } catch (error) {

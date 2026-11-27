@@ -307,7 +307,7 @@ export const DEFAULT_TEMPLATE_RECORD: TemplateRecord = { id: null, name: DEFAULT
 
 const ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_]{0,49}$/;
 const RESERVED_IDS = new Set([
-    'drive_link', 'useProfile', 'useCollaborators', 'aiNotes', 'aiReferenceFiles', 'constructor', 'prototype', '__proto__', 'toString',
+    'drive_link', 'drive_pdf_link', 'drive_pdf_id', 'drive_folder_id', 'useProfile', 'useCollaborators', 'aiNotes', 'aiReferenceFiles', 'constructor', 'prototype', '__proto__', 'toString',
     // Old payload keys that normalizeReportData migrates (and would remove from custom fields).
     ...LEGACY_KEYS,
 ]);

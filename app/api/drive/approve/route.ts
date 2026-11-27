@@ -1,25 +1,26 @@
-import { Readable } from 'node:stream';
 import React from 'react';
 import { NextResponse } from 'next/server';
-import { auth as googleAuth, drive as googleDrive } from '@googleapis/drive';
 import { renderToBuffer, type DocumentProps } from '@react-pdf/renderer';
 import { ReportPDF } from '@/components/ReportPDF';
 import { forbidden, getAuthContext, unauthorized } from '@/lib/auth';
 import { normalizeReportData } from '@/lib/reportData';
-import { isPathAllowedForReport, resolveStorageRefs, scopedSigner } from '@/lib/storage';
+import { isPathAllowedForReport, parseStorageRef, resolveStorageRefs, scopedSigner } from '@/lib/storage';
+import { allFields } from '@/lib/template';
+import { collectOriginalFiles, mimeFor } from '@/lib/archiveFiles';
+import { archiveRootFolder, createDriveClient, createDriveFolder, describeDriveError, driveMode, driveSafeName, uploadToDrive } from '@/lib/drive';
 import { loadTemplate } from '@/lib/templateStore';
 import { dispatchNotificationEmails } from '@/lib/notificationDispatch';
 import { createAdminClient, createServiceSigner } from '@/utils/supabase/admin';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Admin only: renders a submitted report to PDF, archives it in Google Drive and
- * marks it as approved.
+ * Admin only: renders a submitted report to PDF, archives it in Google Drive (a folder per
+ * report with the PDF and the original uploads) and marks it as approved.
  */
 export async function POST(req: Request) {
     const ctx = await getAuthContext();
@@ -36,10 +37,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Missing or invalid reportId.' }, { status: 400 });
     }
 
-    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
-    const serviceAccountJson = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
-    if (!folderId || !serviceAccountJson) {
-        return NextResponse.json({ error: 'Google Drive is not configured on this server.' }, { status: 503 });
+    const mode = driveMode();
+    if (!mode) {
+        return NextResponse.json({ error: 'Google Drive is not set up on this server yet (see the Drive setup steps).' }, { status: 503 });
     }
 
     try {
@@ -71,26 +71,33 @@ export async function POST(req: Request) {
         const element = React.createElement(ReportPDF, { data: reportData, template }) as unknown as React.ReactElement<DocumentProps>;
         const pdfBuffer = await renderToBuffer(element);
 
-        // 2. Upload to Google Drive with the service account.
-        const authClient = new googleAuth.GoogleAuth({
-            credentials: JSON.parse(serviceAccountJson),
-            scopes: ['https://www.googleapis.com/auth/drive.file'],
-        });
-        const drive = googleDrive({ version: 'v3', auth: authClient });
-
+        // 2. Archive in Google Drive: <archive folder>/<date> <title> (<owner>)/ with the PDF and the originals.
+        const drive = createDriveClient(mode);
         const owner = Array.isArray(report.profiles) ? report.profiles[0] : report.profiles;
-        const safeTitle = (report.title || 'Report').replace(/[^a-zA-Z0-9]+/g, '_').slice(0, 80);
-        const safeOwner = (owner?.full_name || '').replace(/[^a-zA-Z0-9]+/g, '');
-        const fileName = `${safeTitle}${safeOwner ? `_${safeOwner}` : ''}.pdf`;
+        const title = driveSafeName(report.title || 'Report', 100);
+        const dateField = allFields(template).find((f) => f.type === 'dateRange' || f.type === 'date');
+        const eventDate = dateField && typeof reportData[dateField.id] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(reportData[dateField.id] as string)
+            ? reportData[dateField.id] as string
+            : new Date().toISOString().slice(0, 10);
+        const root = await archiveRootFolder(drive, mode);
+        const folder = await createDriveFolder(drive, `${eventDate} ${title}${owner?.full_name ? ` (${owner.full_name})` : ''}`, root);
+        const pdfFile = await uploadToDrive(drive, folder.id, `${title}.pdf`, 'application/pdf', Buffer.from(pdfBuffer));
 
-        const driveResponse = await drive.files.create({
-            requestBody: { name: fileName, parents: [folderId] },
-            media: { mimeType: 'application/pdf', body: Readable.from(pdfBuffer) },
-            fields: 'id, webViewLink',
-            supportsAllDrives: true, // required when the folder lives in a Shared Drive
-        });
-        const link = driveResponse.data.webViewLink;
-        if (!link) throw new Error('Google Drive did not return a link for the uploaded file.');
+        // Originals: only files that belong to this report or its members; a failure skips that file.
+        const missed: string[] = [];
+        for (const original of collectOriginalFiles(template, normalizeReportData(report.data))) {
+            try {
+                const loc = parseStorageRef(original.ref);
+                if (!loc || !isPathAllowedForReport(loc.bucket, loc.path, report.id, memberIds)) throw new Error('not part of this report');
+                const { data: blob, error: downloadError } = await admin.storage.from(loc.bucket).download(loc.path);
+                if (downloadError || !blob) throw new Error(downloadError?.message ?? 'download failed');
+                await uploadToDrive(drive, folder.id, original.name, blob.type || mimeFor(original.name), Buffer.from(await blob.arrayBuffer()));
+            } catch (fileError) {
+                console.error(`Could not copy "${original.name}" to Drive:`, fileError);
+                missed.push(original.name);
+            }
+        }
+        const link = folder.link;
 
         // 3. Mark as approved. The status filter makes a double click harmless.
         const storedData = report.data && typeof report.data === 'object' ? report.data : {};
@@ -99,7 +106,7 @@ export async function POST(req: Request) {
             .update({
                 status: 'approved',
                 admin_feedback: null,
-                data: { ...storedData, drive_link: link },
+                data: { ...storedData, drive_link: link, drive_pdf_link: pdfFile.link, drive_folder_id: folder.id, drive_pdf_id: pdfFile.id },
                 updated_at: new Date().toISOString(),
             })
             .eq('id', reportId)
@@ -121,10 +128,9 @@ export async function POST(req: Request) {
             });
         }
 
-        return NextResponse.json({ success: true, fileId: driveResponse.data.id, link });
+        return NextResponse.json({ success: true, link, pdfLink: pdfFile.link, missed });
     } catch (error) {
         console.error('Drive approve error:', error);
-        const message = error instanceof Error ? error.message : 'Failed to archive the report in Google Drive.';
-        return NextResponse.json({ error: message }, { status: 500 });
+        return NextResponse.json({ error: describeDriveError(error) || 'Failed to archive the report in Google Drive.' }, { status: 500 });
     }
 }

@@ -7,6 +7,7 @@ import { createClient } from '@/utils/supabase/client';
 import { DEPARTMENT_NAME } from '@/lib/constants';
 import PendingChecklist from '@/components/PendingChecklist';
 import EventCalendar from '@/components/calendar/EventCalendar';
+import ReportArchive from '@/components/ReportArchive';
 import {
     Home,
     FilePlus,
@@ -206,7 +207,11 @@ export default function DashboardPage() {
                             </div>
                         </div>
 
-                        {userId && (
+                        {/* Faculty: the department's archive of approved reports (from Google Drive) */}
+                        {userId && !isAdmin && <ReportArchive />}
+
+                        {/* Admins: event calendar + checklist */}
+                        {userId && isAdmin && (
                             <div className="grid grid-cols-1 xl:grid-cols-5 gap-8 items-start">
                                 {/* Left: department events (admins schedule them here) */}
                                 <div className="xl:col-span-3">

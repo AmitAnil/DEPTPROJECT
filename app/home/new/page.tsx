@@ -15,6 +15,7 @@ import { mergeAiValues } from '@/lib/aiFill';
 import { kickEmailDispatch } from '@/lib/notifyClient';
 
 import { Loader2, Lock, MessageSquareWarning, ExternalLink } from 'lucide-react';
+import { archivedPdfId } from '@/lib/archive';
 
 type Access = 'owner' | 'editor' | 'viewer' | 'admin';
 type SaveState = 'idle' | 'saving' | 'saved' | 'error';
@@ -374,7 +375,8 @@ function ReportEditorContent() {
         blue: 'bg-blue-50 border-blue-200 text-blue-700',
         gray: 'bg-gray-50 border-gray-200 text-gray-700',
     };
-    const driveLink = typeof reportData.drive_link === 'string' ? reportData.drive_link : '';
+    // The Drive folder is private; the archived PDF opens through DeptDocs.
+    const archived = status === 'approved' && reportId && archivedPdfId(reportData) !== null;
 
     return (
         <ReportLayout
@@ -403,8 +405,8 @@ function ReportEditorContent() {
                     <Lock size={18} className="shrink-0 mt-0.5" />
                     <div>
                         <p className="font-medium">{banner.text}</p>
-                        {status === 'approved' && driveLink.startsWith('https://') && (
-                            <a href={driveLink} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-1 font-bold underline">
+                        {archived && (
+                            <a href={`/api/archive/${reportId}/pdf`} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-1 font-bold underline">
                                 Open archived PDF <ExternalLink size={12} />
                             </a>
                         )}
